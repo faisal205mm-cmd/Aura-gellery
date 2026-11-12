@@ -1,0 +1,6 @@
+{
+  "name": "Aura Gallery",
+  "description": "Secure offline media gallery with smart album organization, SD card & external storage management, PIN-protected private vault, and optional cloud backup.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
