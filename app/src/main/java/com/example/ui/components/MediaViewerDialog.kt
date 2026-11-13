@@ -68,7 +68,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import coil.decode.VideoFrameDecoder
 import coil.request.ImageRequest
+import coil.request.videoFramePercent
 import com.example.data.model.BackupStatus
 import com.example.data.model.MediaItem
 import com.example.data.model.StorageType
@@ -128,6 +130,12 @@ fun MediaViewerDialog(
                     AsyncImage(
                         model = ImageRequest.Builder(context)
                             .data(item.uri)
+                            .apply {
+                                if (item.isVideo) {
+                                    decoderFactory(VideoFrameDecoder.Factory())
+                                    videoFramePercent(0.1)
+                                }
+                            }
                             .crossfade(true)
                             .build(),
                         contentDescription = item.name,

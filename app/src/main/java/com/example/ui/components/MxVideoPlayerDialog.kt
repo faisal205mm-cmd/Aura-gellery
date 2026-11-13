@@ -107,7 +107,10 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.example.R
@@ -249,6 +252,8 @@ fun MxVideoPlayerDialog(
     var isBuffering by remember { mutableStateOf(true) }
     var playbackError by remember { mutableStateOf<String?>(null) }
     var reloadTrigger by remember { mutableIntStateOf(0) }
+    var useSoftwareDecoder by remember(item.uri, item.path) { mutableStateOf(false) }
+    var resumePositionMs by remember(item.uri, item.path) { mutableLongStateOf(0L) }
 
     var currentPositionMs by remember { mutableLongStateOf(0L) }
     var totalDurationMs by remember { mutableLongStateOf(item.duration.coerceAtLeast(1000L)) }
@@ -279,7 +284,7 @@ fun MxVideoPlayerDialog(
             )
         )
     }
-    var selectedQualityId by remember { mutableStateOf("auto") }
+    var selectedQualityId by remember(item.uri, item.path) { mutableStateOf("auto") }
 
     // Gesture HUD Overlays (Volume, Brightness, Seek)
     var showVolumeOverlay by remember { mutableStateOf(false) }
@@ -296,11 +301,28 @@ fun MxVideoPlayerDialog(
     var showRewindFeedback by remember { mutableStateOf(false) }
     var showForwardFeedback by remember { mutableStateOf(false) }
 
-    // Configure ExoPlayer with decoder fallback & unconstrained 1080p/4K/8K track selection
-    val exoPlayer = remember(item.uri, item.path, reloadTrigger) {
+    // Configure ExoPlayer with decoder fallback, software codec recovery, & unconstrained 1080p/4K/8K track selection
+    val exoPlayer = remember(item.uri, item.path, reloadTrigger, useSoftwareDecoder) {
+        val codecSelector = if (useSoftwareDecoder) {
+            MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+                val allDecoders = MediaCodecSelector.DEFAULT.getDecoderInfos(
+                    mimeType,
+                    requiresSecureDecoder,
+                    requiresTunnelingDecoder
+                )
+                val softwareDecoders = allDecoders.filter { it.softwareOnly }
+                val hardwareDecoders = allDecoders.filterNot { it.softwareOnly }
+                softwareDecoders + hardwareDecoders
+            }
+        } else {
+            MediaCodecSelector.DEFAULT
+        }
+
         val renderersFactory = DefaultRenderersFactory(context)
             .setEnableDecoderFallback(true)
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+            .setMediaCodecSelector(codecSelector)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+            .forceEnableMediaCodecAsynchronousQueueing()
 
         val trackSelector = DefaultTrackSelector(context).apply {
             setParameters(
@@ -308,11 +330,17 @@ fun MxVideoPlayerDialog(
                     .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
                     .setMaxVideoBitrate(Int.MAX_VALUE)
                     .setExceedVideoConstraintsIfNecessary(true)
-                    .setExceedRendererCapabilitiesIfNecessary(true)
+                    .setExceedRendererCapabilitiesIfNecessary(useSoftwareDecoder)
                     .setAllowVideoMixedMimeTypeAdaptiveness(true)
+                    .setAllowVideoNonSeamlessAdaptiveness(true)
                     .build()
             )
         }
+
+        val extractorsFactory = DefaultExtractorsFactory()
+            .setConstantBitrateSeekingEnabled(true)
+
+        val mediaSourceFactory = DefaultMediaSourceFactory(context, extractorsFactory)
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
@@ -329,11 +357,13 @@ fun MxVideoPlayerDialog(
             .build()
 
         ExoPlayer.Builder(context, renderersFactory)
+            .setMediaSourceFactory(mediaSourceFactory)
             .setTrackSelector(trackSelector)
             .setLoadControl(loadControl)
             .build()
             .apply {
                 setAudioAttributes(audioAttributes, true)
+                playbackParameters = PlaybackParameters(playbackSpeed)
                 playWhenReady = true
             }
     }
@@ -376,6 +406,13 @@ fun MxVideoPlayerDialog(
     }
 
     fun selectVideoQuality(option: VideoQualityOption) {
+        if (option.id == selectedQualityId) return
+        val videoTrackCount = qualityOptions.count { it.trackGroup != null }
+        // Single-track local files only have one native video track: avoid re-configuring MediaCodec unnecessarily
+        if (videoTrackCount <= 1) {
+            selectedQualityId = option.id
+            return
+        }
         try {
             val builder = exoPlayer.trackSelectionParameters.buildUpon()
             if (option.trackGroup == null || option.trackIndex < 0) {
@@ -401,7 +438,6 @@ fun MxVideoPlayerDialog(
         isPlayerPrepared = false
         isBuffering = true
         playbackError = null
-        selectedQualityId = "auto"
 
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -444,10 +480,27 @@ fun MxVideoPlayerDialog(
             override fun onTracksChanged(tracks: Tracks) {
                 val extracted = extractVideoQualityOptions(tracks, isBangla)
                 qualityOptions = extracted
+                val videoTrackCount = extracted.count { it.trackGroup != null }
+                if (videoTrackCount <= 1) {
+                    // Keep user's UI selection ("auto" or single track) without forcing an override
+                    return
+                }
                 val hasVideoOverride = exoPlayer.trackSelectionParameters.overrides.values.any {
                     it.type == C.TRACK_TYPE_VIDEO
                 }
-                if (!hasVideoOverride) {
+                if (!hasVideoOverride && selectedQualityId != "auto") {
+                    val target = extracted.firstOrNull { it.id == selectedQualityId }
+                    if (target?.trackGroup != null && target.trackIndex >= 0) {
+                        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                            .buildUpon()
+                            .setOverrideForType(
+                                TrackSelectionOverride(target.trackGroup.mediaTrackGroup, target.trackIndex)
+                            )
+                            .build()
+                    } else {
+                        selectedQualityId = "auto"
+                    }
+                } else if (!hasVideoOverride) {
                     selectedQualityId = "auto"
                 } else {
                     val activeTrackOption = extracted.firstOrNull { opt ->
@@ -460,6 +513,33 @@ fun MxVideoPlayerDialog(
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                val isDecoderFailure = error.errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ||
+                    error.errorCode == PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED ||
+                    error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED ||
+                    error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ||
+                    error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES
+
+                if (!useSoftwareDecoder && isDecoderFailure) {
+                    // Seamlessly switch to software MediaCodec decoders and resume playback at current position
+                    val safePos = exoPlayer.currentPosition.coerceAtLeast(currentPositionMs).coerceAtLeast(0L)
+                    resumePositionMs = safePos
+                    playbackError = null
+                    isBuffering = true
+                    useSoftwareDecoder = true
+                    return
+                }
+
+                if (useSoftwareDecoder && isDecoderFailure && selectedQualityId != "auto") {
+                    // Revert failing manual track override back to Auto and retry cleanly
+                    val safePos = exoPlayer.currentPosition.coerceAtLeast(currentPositionMs).coerceAtLeast(0L)
+                    resumePositionMs = safePos
+                    selectedQualityId = "auto"
+                    playbackError = null
+                    isBuffering = true
+                    reloadTrigger++
+                    return
+                }
+
                 isPlayerPrepared = false
                 isPlaying = false
                 isBuffering = false
@@ -476,6 +556,9 @@ fun MxVideoPlayerDialog(
         try {
             val resolvedUri = resolvePlayableUri(item)
             exoPlayer.setMediaItem(Media3MediaItem.fromUri(resolvedUri))
+            if (resumePositionMs > 0L) {
+                exoPlayer.seekTo(resumePositionMs)
+            }
             exoPlayer.prepare()
             exoPlayer.playWhenReady = true
         } catch (e: Exception) {
@@ -621,7 +704,10 @@ fun MxVideoPlayerDialog(
                                         Text(if (isBangla) "ফিরে যান" else "Close")
                                     }
                                     Button(
-                                        onClick = { reloadTrigger++ },
+                                        onClick = {
+                                            resumePositionMs = currentPositionMs.coerceAtLeast(0L)
+                                            reloadTrigger++
+                                        },
                                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                                     ) {
                                         Icon(
@@ -638,123 +724,125 @@ fun MxVideoPlayerDialog(
                     }
                 }
 
-                // TOUCH & MX GESTURE DETECTION LAYER
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(isScreenLocked, isPlayerPrepared) {
-                            if (isScreenLocked) {
-                                detectTapGestures {
-                                    controlsVisible = !controlsVisible
-                                }
-                            } else {
-                                detectTapGestures(
-                                    onTap = {
+                // TOUCH & MX GESTURE DETECTION LAYER (only active when there is no blocking error overlay)
+                if (playbackError == null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(isScreenLocked, isPlayerPrepared) {
+                                if (isScreenLocked) {
+                                    detectTapGestures {
                                         controlsVisible = !controlsVisible
-                                    },
-                                    onDoubleTap = { offset ->
-                                        if (!isPlayerPrepared) return@detectTapGestures
-                                        val isRightHalf = offset.x > (containerWidth / 2f)
-                                        if (isRightHalf) {
-                                            safeSeekTo(currentPositionMs + 10000L)
-                                            showForwardFeedback = true
-                                            scope.launch {
-                                                delay(650)
-                                                showForwardFeedback = false
-                                            }
-                                        } else {
-                                            safeSeekTo(currentPositionMs - 10000L)
-                                            showRewindFeedback = true
-                                            scope.launch {
-                                                delay(650)
-                                                showRewindFeedback = false
-                                            }
-                                        }
                                     }
-                                )
-                            }
-                        }
-                        .pointerInput(isScreenLocked, isPlayerPrepared) {
-                            if (!isScreenLocked) {
-                                var dragMode = 0 // 0 = none, 1 = volume (right vertical), 2 = brightness (left vertical), 3 = seek (horizontal)
-                                var totalDragX = 0f
-                                var totalDragY = 0f
-                                var initialSeekPos = 0L
-
-                                detectDragGestures(
-                                    onDragStart = {
-                                        totalDragX = 0f
-                                        totalDragY = 0f
-                                        dragMode = 0
-                                        initialSeekPos = currentPositionMs
-                                    },
-                                    onDrag = { change, dragAmount ->
-                                        change.consume()
-                                        totalDragX += dragAmount.x
-                                        totalDragY += dragAmount.y
-
-                                        if (dragMode == 0) {
-                                            if (abs(totalDragX) > 30f && abs(totalDragX) > abs(totalDragY)) {
-                                                dragMode = 3 // Horizontal Seek
-                                            } else if (abs(totalDragY) > 30f) {
-                                                dragMode = if (change.position.x > containerWidth / 2f) 1 else 2
-                                            }
-                                        }
-
-                                        when (dragMode) {
-                                            1 -> {
-                                                // Volume Control (Right side)
-                                                val step = (-dragAmount.y / containerHeight) * maxVolume
-                                                val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-                                                val newVol = (currentVol + step).toInt().coerceIn(0, maxVolume)
-                                                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
-                                                currentVolumePercent = (newVol * 100) / maxVolume
-                                                showVolumeOverlay = true
-                                            }
-                                            2 -> {
-                                                // Brightness Control (Left side)
-                                                val window = activity?.window
-                                                val lp = window?.attributes
-                                                val cur = if (lp?.screenBrightness != null && lp.screenBrightness >= 0f) lp.screenBrightness else 0.5f
-                                                val delta = -dragAmount.y / (containerHeight * 0.7f)
-                                                val newBrightness = (cur + delta).coerceIn(0.05f, 1.0f)
-                                                lp?.screenBrightness = newBrightness
-                                                window?.attributes = lp
-                                                currentBrightnessPercent = (newBrightness * 100).toInt()
-                                                showBrightnessOverlay = true
-                                            }
-                                            3 -> {
-                                                // Seek Control (Horizontal)
-                                                if (isPlayerPrepared) {
-                                                    val duration = totalDurationMs.coerceAtLeast(1000L)
-                                                    val seekDeltaMs = ((totalDragX / containerWidth) * 90000L).toLong()
-                                                    val target = (initialSeekPos + seekDeltaMs).coerceIn(0L, duration)
-                                                    seekTargetMs = target
-                                                    seekDeltaSeconds = ((target - initialSeekPos) / 1000).toInt()
-                                                    showSeekOverlay = true
+                                } else {
+                                    detectTapGestures(
+                                        onTap = {
+                                            controlsVisible = !controlsVisible
+                                        },
+                                        onDoubleTap = { offset ->
+                                            if (!isPlayerPrepared) return@detectTapGestures
+                                            val isRightHalf = offset.x > (containerWidth / 2f)
+                                            if (isRightHalf) {
+                                                safeSeekTo(currentPositionMs + 10000L)
+                                                showForwardFeedback = true
+                                                scope.launch {
+                                                    delay(650)
+                                                    showForwardFeedback = false
+                                                }
+                                            } else {
+                                                safeSeekTo(currentPositionMs - 10000L)
+                                                showRewindFeedback = true
+                                                scope.launch {
+                                                    delay(650)
+                                                    showRewindFeedback = false
                                                 }
                                             }
                                         }
-                                    },
-                                    onDragEnd = {
-                                        if (dragMode == 3 && showSeekOverlay) {
-                                            safeSeekTo(seekTargetMs)
-                                        }
-                                        showVolumeOverlay = false
-                                        showBrightnessOverlay = false
-                                        showSeekOverlay = false
-                                        dragMode = 0
-                                    },
-                                    onDragCancel = {
-                                        showVolumeOverlay = false
-                                        showBrightnessOverlay = false
-                                        showSeekOverlay = false
-                                        dragMode = 0
-                                    }
-                                )
+                                    )
+                                }
                             }
-                        }
-                )
+                            .pointerInput(isScreenLocked, isPlayerPrepared) {
+                                if (!isScreenLocked) {
+                                    var dragMode = 0 // 0 = none, 1 = volume (right vertical), 2 = brightness (left vertical), 3 = seek (horizontal)
+                                    var totalDragX = 0f
+                                    var totalDragY = 0f
+                                    var initialSeekPos = 0L
+
+                                    detectDragGestures(
+                                        onDragStart = {
+                                            totalDragX = 0f
+                                            totalDragY = 0f
+                                            dragMode = 0
+                                            initialSeekPos = currentPositionMs
+                                        },
+                                        onDrag = { change, dragAmount ->
+                                            change.consume()
+                                            totalDragX += dragAmount.x
+                                            totalDragY += dragAmount.y
+
+                                            if (dragMode == 0) {
+                                                if (abs(totalDragX) > 30f && abs(totalDragX) > abs(totalDragY)) {
+                                                    dragMode = 3 // Horizontal Seek
+                                                } else if (abs(totalDragY) > 30f) {
+                                                    dragMode = if (change.position.x > containerWidth / 2f) 1 else 2
+                                                }
+                                            }
+
+                                            when (dragMode) {
+                                                1 -> {
+                                                    // Volume Control (Right side)
+                                                    val step = (-dragAmount.y / containerHeight) * maxVolume
+                                                    val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                                                    val newVol = (currentVol + step).toInt().coerceIn(0, maxVolume)
+                                                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
+                                                    currentVolumePercent = (newVol * 100) / maxVolume
+                                                    showVolumeOverlay = true
+                                                }
+                                                2 -> {
+                                                    // Brightness Control (Left side)
+                                                    val window = activity?.window
+                                                    val lp = window?.attributes
+                                                    val cur = if (lp?.screenBrightness != null && lp.screenBrightness >= 0f) lp.screenBrightness else 0.5f
+                                                    val delta = -dragAmount.y / (containerHeight * 0.7f)
+                                                    val newBrightness = (cur + delta).coerceIn(0.05f, 1.0f)
+                                                    lp?.screenBrightness = newBrightness
+                                                    window?.attributes = lp
+                                                    currentBrightnessPercent = (newBrightness * 100).toInt()
+                                                    showBrightnessOverlay = true
+                                                }
+                                                3 -> {
+                                                    // Seek Control (Horizontal)
+                                                    if (isPlayerPrepared) {
+                                                        val duration = totalDurationMs.coerceAtLeast(1000L)
+                                                        val seekDeltaMs = ((totalDragX / containerWidth) * 90000L).toLong()
+                                                        val target = (initialSeekPos + seekDeltaMs).coerceIn(0L, duration)
+                                                        seekTargetMs = target
+                                                        seekDeltaSeconds = ((target - initialSeekPos) / 1000).toInt()
+                                                        showSeekOverlay = true
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        onDragEnd = {
+                                            if (dragMode == 3 && showSeekOverlay) {
+                                                safeSeekTo(seekTargetMs)
+                                            }
+                                            showVolumeOverlay = false
+                                            showBrightnessOverlay = false
+                                            showSeekOverlay = false
+                                            dragMode = 0
+                                        },
+                                        onDragCancel = {
+                                            showVolumeOverlay = false
+                                            showBrightnessOverlay = false
+                                            showSeekOverlay = false
+                                            dragMode = 0
+                                        }
+                                    )
+                                }
+                            }
+                    )
+                }
 
                 // GESTURE HUD OVERLAYS (VOLUME, BRIGHTNESS, SEEK)
                 // 1. Volume HUD
@@ -909,7 +997,7 @@ fun MxVideoPlayerDialog(
 
                 // ON-SCREEN MX CONTROLS (TOP & BOTTOM BARS)
                 AnimatedVisibility(
-                    visible = controlsVisible && !isScreenLocked,
+                    visible = controlsVisible && !isScreenLocked && playbackError == null,
                     enter = fadeIn(),
                     exit = fadeOut(),
                     modifier = Modifier.fillMaxSize()
@@ -968,7 +1056,11 @@ fun MxVideoPlayerDialog(
                                     }
 
                                     Text(
-                                        text = " • ${videoWidth}×${videoHeight} • Media3",
+                                        text = if (useSoftwareDecoder) {
+                                            " • ${videoWidth}×${videoHeight} • Media3 SW"
+                                        } else {
+                                            " • ${videoWidth}×${videoHeight} • Media3"
+                                        },
                                         color = Color.White.copy(alpha = 0.65f),
                                         fontSize = 11.sp,
                                         maxLines = 1,
@@ -1274,11 +1366,20 @@ fun MxVideoPlayerDialog(
                                 }
 
                                 Spacer(modifier = Modifier.height(6.dp))
+                                val videoTrackCount = qualityOptions.count { it.trackGroup != null }
                                 Text(
-                                    text = if (isBangla) {
-                                        "মিডিয়া সোর্সে উপলব্ধ রেজোলিউশন ট্র্যাক থেকে বেছে নিন"
+                                    text = if (videoTrackCount <= 1) {
+                                        if (isBangla) {
+                                            "এই ভিডিওতে ১টি মূল রেজোলিউশন ট্র্যাক রয়েছে"
+                                        } else {
+                                            "This media source has 1 native resolution track"
+                                        }
                                     } else {
-                                        "Switch between available resolution tracks from the media source"
+                                        if (isBangla) {
+                                            "মিডিয়া সোর্সে উপলব্ধ রেজোলিউশন ট্র্যাক থেকে বেছে নিন"
+                                        } else {
+                                            "Switch between available resolution tracks from the media source"
+                                        }
                                     },
                                     color = Color.White.copy(alpha = 0.65f),
                                     fontSize = 12.sp

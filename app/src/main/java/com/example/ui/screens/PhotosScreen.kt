@@ -252,20 +252,26 @@ fun PhotosScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
-                        imageVector = Icons.Default.Collections,
+                        imageVector = if (activeFilter == MediaFilter.VIDEOS_ONLY) Icons.Default.VideoLibrary else Icons.Default.Collections,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                         modifier = Modifier.size(64.dp)
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = if (isBangla) "কোনো ছবি পাওয়া যায়নি" else "No photos found",
+                        text = when (activeFilter) {
+                            MediaFilter.VIDEOS_ONLY -> if (isBangla) "কোনো ভিডিও পাওয়া যায়নি" else "No videos found"
+                            else -> if (isBangla) "কোনো ছবি পাওয়া যায়নি" else "No photos found"
+                        },
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = if (isBangla) "ফিল্টার পরিবর্তন করুন অথবা নতুন ছবি তুলুন" else "Change the filter or take new photos",
+                        text = when (activeFilter) {
+                            MediaFilter.VIDEOS_ONLY -> if (isBangla) "ফিল্টার পরিবর্তন করুন অথবা নতুন ভিডিও রেকর্ড করুন" else "Change the filter or record new videos"
+                            else -> if (isBangla) "ফিল্টার পরিবর্তন করুন অথবা নতুন ছবি তুলুন" else "Change the filter or take new photos"
+                        },
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                         modifier = Modifier.padding(top = 4.dp)
