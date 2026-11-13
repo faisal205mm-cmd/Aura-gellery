@@ -2,21 +2,17 @@ package com.example.ui.components
 
 import android.app.Activity
 import android.content.Context
-import android.graphics.Matrix
-import android.graphics.SurfaceTexture
-import android.media.AudioAttributes
 import android.media.AudioManager
-import android.media.MediaPlayer
-import android.media.PlaybackParams
 import android.net.Uri
-import android.os.Build
-import android.view.Surface
-import android.view.TextureView
+import android.view.LayoutInflater
 import android.view.WindowManager
+import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -28,13 +24,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
@@ -42,8 +42,10 @@ import androidx.compose.material.icons.automirrored.filled.VolumeMute
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.BrightnessHigh
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Pause
@@ -57,13 +59,16 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -90,6 +95,22 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
+import com.example.R
 import com.example.data.model.MediaItem
 import com.example.ui.theme.ElectricIndigo
 import com.example.ui.theme.GoldenVault
@@ -99,14 +120,116 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
 import kotlin.math.abs
+import androidx.media3.common.MediaItem as Media3MediaItem
 
 enum class AspectRatioMode {
     FIT,        // Letterbox
     STRETCH,    // Stretch to exact screen size
     CROP_FILL,  // Zoom in to fill screen with no black bars
-    ORIGINAL    // 1:1 original pixel scale
+    ORIGINAL    // 1:1 original aspect ratio
 }
 
+private data class VideoQualityOption(
+    val id: String,
+    val label: String,
+    val shortLabel: String,
+    val detail: String,
+    val width: Int,
+    val height: Int,
+    val bitrate: Int,
+    val trackGroup: Tracks.Group?,
+    val trackIndex: Int,
+    val isSupported: Boolean = true
+)
+
+internal fun formatQualityLabels(width: Int, height: Int): Pair<String, String> {
+    val shortSide = minOf(width, height)
+    val longSide = maxOf(width, height)
+    return when {
+        shortSide >= 2160 || longSide >= 3840 -> "2160p 4K UHD" to "4K"
+        shortSide >= 1440 || longSide >= 2560 -> "1440p 2K QHD" to "2K"
+        shortSide >= 1080 || longSide >= 1920 -> "1080p Full HD" to "1080p"
+        shortSide >= 720 -> "720p HD" to "720p"
+        shortSide > 0 -> "${shortSide}p" to "${shortSide}p"
+        else -> "Standard" to "SD"
+    }
+}
+
+private fun extractVideoQualityOptions(tracks: Tracks, isBangla: Boolean): List<VideoQualityOption> {
+    val trackOptions = mutableListOf<VideoQualityOption>()
+    tracks.groups.forEachIndexed { groupIdx, group ->
+        if (group.type == C.TRACK_TYPE_VIDEO) {
+            for (trackIdx in 0 until group.length) {
+                val format = group.getTrackFormat(trackIdx)
+                if (format.width > 0 && format.height > 0) {
+                    val (label, shortLabel) = formatQualityLabels(format.width, format.height)
+                    val bitratePart = if (format.bitrate > 0) {
+                        String.format(Locale.US, " • %.1f Mbps", format.bitrate / 1_000_000f)
+                    } else {
+                        ""
+                    }
+                    val fpsPart = if (format.frameRate > 0f) {
+                        " • ${format.frameRate.toInt()}fps"
+                    } else {
+                        ""
+                    }
+                    trackOptions.add(
+                        VideoQualityOption(
+                            id = "${groupIdx}_$trackIdx",
+                            label = label,
+                            shortLabel = shortLabel,
+                            detail = "${format.width}×${format.height}$fpsPart$bitratePart",
+                            width = format.width,
+                            height = format.height,
+                            bitrate = format.bitrate,
+                            trackGroup = group,
+                            trackIndex = trackIdx,
+                            isSupported = group.isTrackSupported(trackIdx)
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    val sortedTracks = trackOptions.sortedWith(
+        compareByDescending<VideoQualityOption> { minOf(it.width, it.height) }
+            .thenByDescending { maxOf(it.width, it.height) }
+            .thenByDescending { it.bitrate }
+    )
+
+    val autoOption = VideoQualityOption(
+        id = "auto",
+        label = if (isBangla) "অটো (স্বয়ংক্রিয়)" else "Auto (Recommended)",
+        shortLabel = if (isBangla) "অটো" else "Auto",
+        detail = if (isBangla) "সর্বোচ্চ ও স্থিতিশীল কোয়ালিটি নির্বাচন করে" else "Automatically picks best resolution",
+        width = 0,
+        height = 0,
+        bitrate = 0,
+        trackGroup = null,
+        trackIndex = -1
+    )
+
+    return listOf(autoOption) + sortedTracks
+}
+
+private fun resolvePlayableUri(item: MediaItem): Uri {
+    val uriStr = item.uri.trim()
+    if (uriStr.startsWith("content://") ||
+        uriStr.startsWith("android.resource://") ||
+        uriStr.startsWith("http://") ||
+        uriStr.startsWith("https://") ||
+        uriStr.startsWith("file://")
+    ) {
+        return Uri.parse(uriStr)
+    }
+    if (item.path.isNotBlank()) {
+        return Uri.fromFile(File(item.path))
+    }
+    return Uri.parse(uriStr)
+}
+
+@OptIn(UnstableApi::class)
 @Composable
 fun MxVideoPlayerDialog(
     item: MediaItem,
@@ -120,8 +243,7 @@ fun MxVideoPlayerDialog(
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val maxVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
 
-    // Media Player states
-    var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+    // Media3 ExoPlayer states
     var isPlayerPrepared by remember { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(true) }
@@ -139,6 +261,25 @@ fun MxVideoPlayerDialog(
     var currentAspectRatioMode by remember { mutableStateOf(AspectRatioMode.FIT) }
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var showSpeedMenu by remember { mutableStateOf(false) }
+    var showQualityDialog by remember { mutableStateOf(false) }
+    var qualityOptions by remember {
+        mutableStateOf(
+            listOf(
+                VideoQualityOption(
+                    id = "auto",
+                    label = if (isBangla) "অটো (স্বয়ংক্রিয়)" else "Auto (Recommended)",
+                    shortLabel = if (isBangla) "অটো" else "Auto",
+                    detail = if (isBangla) "সর্বোচ্চ ও স্থিতিশীল কোয়ালিটি নির্বাচন করে" else "Automatically picks best resolution",
+                    width = 0,
+                    height = 0,
+                    bitrate = 0,
+                    trackGroup = null,
+                    trackIndex = -1
+                )
+            )
+        )
+    }
+    var selectedQualityId by remember { mutableStateOf("auto") }
 
     // Gesture HUD Overlays (Volume, Brightness, Seek)
     var showVolumeOverlay by remember { mutableStateOf(false) }
@@ -155,16 +296,59 @@ fun MxVideoPlayerDialog(
     var showRewindFeedback by remember { mutableStateOf(false) }
     var showForwardFeedback by remember { mutableStateOf(false) }
 
-    // Safe playback actions that NEVER call MediaPlayer in un-prepared state
+    // Configure ExoPlayer with decoder fallback & unconstrained 1080p/4K/8K track selection
+    val exoPlayer = remember(item.uri, item.path, reloadTrigger) {
+        val renderersFactory = DefaultRenderersFactory(context)
+            .setEnableDecoderFallback(true)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+
+        val trackSelector = DefaultTrackSelector(context).apply {
+            setParameters(
+                buildUponParameters()
+                    .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
+                    .setMaxVideoBitrate(Int.MAX_VALUE)
+                    .setExceedVideoConstraintsIfNecessary(true)
+                    .setExceedRendererCapabilitiesIfNecessary(true)
+                    .setAllowVideoMixedMimeTypeAdaptiveness(true)
+                    .build()
+            )
+        }
+
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs = */ 2500,
+                /* maxBufferMs = */ 30000,
+                /* bufferForPlaybackMs = */ 500,
+                /* bufferForPlaybackAfterRebufferMs = */ 1500
+            )
+            .build()
+
+        val audioAttributes = AudioAttributes.Builder()
+            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+            .setUsage(C.USAGE_MEDIA)
+            .build()
+
+        ExoPlayer.Builder(context, renderersFactory)
+            .setTrackSelector(trackSelector)
+            .setLoadControl(loadControl)
+            .build()
+            .apply {
+                setAudioAttributes(audioAttributes, true)
+                playWhenReady = true
+            }
+    }
+
     fun safePlayPause() {
-        val player = mediaPlayer ?: return
-        if (!isPlayerPrepared) return
         try {
-            if (player.isPlaying) {
-                player.pause()
+            if (exoPlayer.playbackState == Player.STATE_ENDED) {
+                exoPlayer.seekTo(0L)
+                exoPlayer.play()
+                isPlaying = true
+            } else if (exoPlayer.isPlaying) {
+                exoPlayer.pause()
                 isPlaying = false
             } else {
-                player.start()
+                exoPlayer.play()
                 isPlaying = true
             }
         } catch (e: Exception) {
@@ -173,52 +357,161 @@ fun MxVideoPlayerDialog(
     }
 
     fun safeSeekTo(msec: Long) {
-        val player = mediaPlayer ?: return
         if (!isPlayerPrepared) return
         try {
-            val target = msec.coerceIn(0L, totalDurationMs).toInt()
-            player.seekTo(target)
-            currentPositionMs = target.toLong()
+            val target = msec.coerceIn(0L, totalDurationMs)
+            exoPlayer.seekTo(target)
+            currentPositionMs = target
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
 
     fun safeSetSpeed(speed: Float) {
-        val player = mediaPlayer ?: return
-        if (!isPlayerPrepared) return
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val params = player.playbackParams ?: PlaybackParams()
-                player.playbackParams = params.setSpeed(speed)
-            }
+            exoPlayer.playbackParameters = PlaybackParameters(speed)
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
 
-    // Auto-hide controls timer
-    LaunchedEffect(controlsVisible, isPlaying, isScreenLocked) {
-        if (controlsVisible && isPlaying && !isScreenLocked) {
+    fun selectVideoQuality(option: VideoQualityOption) {
+        try {
+            val builder = exoPlayer.trackSelectionParameters.buildUpon()
+            if (option.trackGroup == null || option.trackIndex < 0) {
+                builder
+                    .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                    .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
+                    .setMaxVideoBitrate(Int.MAX_VALUE)
+                selectedQualityId = "auto"
+            } else {
+                builder.setOverrideForType(
+                    TrackSelectionOverride(option.trackGroup.mediaTrackGroup, option.trackIndex)
+                )
+                selectedQualityId = option.id
+            }
+            exoPlayer.trackSelectionParameters = builder.build()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    // Bind media item & listener, release cleanly on disposal or reload
+    DisposableEffect(exoPlayer) {
+        isPlayerPrepared = false
+        isBuffering = true
+        playbackError = null
+        selectedQualityId = "auto"
+
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                when (playbackState) {
+                    Player.STATE_BUFFERING -> {
+                        isBuffering = true
+                    }
+                    Player.STATE_READY -> {
+                        isPlayerPrepared = true
+                        isBuffering = false
+                        playbackError = null
+                        val dur = exoPlayer.duration
+                        if (dur > 0L && dur != C.TIME_UNSET) {
+                            totalDurationMs = dur
+                        }
+                    }
+                    Player.STATE_ENDED -> {
+                        isPlaying = false
+                        isBuffering = false
+                        controlsVisible = true
+                        currentPositionMs = totalDurationMs
+                    }
+                    Player.STATE_IDLE -> {
+                        isBuffering = false
+                    }
+                }
+            }
+
+            override fun onIsPlayingChanged(playing: Boolean) {
+                isPlaying = playing
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    videoWidth = videoSize.width
+                    videoHeight = videoSize.height
+                }
+            }
+
+            override fun onTracksChanged(tracks: Tracks) {
+                val extracted = extractVideoQualityOptions(tracks, isBangla)
+                qualityOptions = extracted
+                val hasVideoOverride = exoPlayer.trackSelectionParameters.overrides.values.any {
+                    it.type == C.TRACK_TYPE_VIDEO
+                }
+                if (!hasVideoOverride) {
+                    selectedQualityId = "auto"
+                } else {
+                    val activeTrackOption = extracted.firstOrNull { opt ->
+                        opt.trackGroup?.isTrackSelected(opt.trackIndex) == true
+                    }
+                    if (activeTrackOption != null) {
+                        selectedQualityId = activeTrackOption.id
+                    }
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                isPlayerPrepared = false
+                isPlaying = false
+                isBuffering = false
+                playbackError = if (isBangla) {
+                    "ভিডিওটি চালানো সম্ভব হয়নি (${error.errorCodeName})"
+                } else {
+                    "Unable to play video (${error.errorCodeName})"
+                }
+            }
+        }
+
+        exoPlayer.addListener(listener)
+
+        try {
+            val resolvedUri = resolvePlayableUri(item)
+            exoPlayer.setMediaItem(Media3MediaItem.fromUri(resolvedUri))
+            exoPlayer.prepare()
+            exoPlayer.playWhenReady = true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            isBuffering = false
+            playbackError = if (isBangla) "ভিডিও সোর্স পাওয়া যায়নি" else "Video source unavailable"
+        }
+
+        onDispose {
+            exoPlayer.removeListener(listener)
+            exoPlayer.release()
+        }
+    }
+
+    // Auto-hide controls timer (paused while quality or speed picker is open)
+    LaunchedEffect(controlsVisible, isPlaying, isScreenLocked, showQualityDialog, showSpeedMenu) {
+        if (controlsVisible && isPlaying && !isScreenLocked && !showQualityDialog && !showSpeedMenu) {
             delay(3500)
             controlsVisible = false
         }
     }
 
-    // Safe progress ticker loop (ONLY polls when player is prepared)
-    LaunchedEffect(mediaPlayer, isPlayerPrepared, isPlaying) {
+    // Progress ticker loop
+    LaunchedEffect(exoPlayer, isPlayerPrepared, isPlaying) {
         while (true) {
-            val player = mediaPlayer
-            if (player != null && isPlayerPrepared && isPlaying) {
+            if (isPlayerPrepared && isPlaying) {
                 try {
-                    if (player.isPlaying) {
-                        currentPositionMs = player.currentPosition.toLong()
-                        if (player.duration > 0) {
-                            totalDurationMs = player.duration.toLong()
-                        }
+                    val pos = exoPlayer.currentPosition
+                    if (pos >= 0L) {
+                        currentPositionMs = pos
                     }
-                } catch (e: Exception) {
-                    // Ignore transient state exception during seeking
+                    val dur = exoPlayer.duration
+                    if (dur > 0L && dur != C.TIME_UNSET) {
+                        totalDurationMs = dur
+                    }
+                } catch (_: Exception) {
                 }
             }
             delay(250)
@@ -230,25 +523,11 @@ fun MxVideoPlayerDialog(
         activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            try {
-                mediaPlayer?.let { mp ->
-                    if (isPlayerPrepared && isPlaying) {
-                        mp.stop()
-                    }
-                    mp.reset()
-                    mp.release()
-                }
-                mediaPlayer = null
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
         }
     }
 
     Dialog(
-        onDismissRequest = {
-            onDismiss()
-        },
+        onDismissRequest = onDismiss,
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
             dismissOnBackPress = true,
@@ -263,125 +542,25 @@ fun MxVideoPlayerDialog(
                 val containerWidth = constraints.maxWidth.toFloat()
                 val containerHeight = constraints.maxHeight.toFloat()
 
-                // Native Hardware-Accelerated Video Surface with Safe Lifecycle
+                // Media3 Hardware-Accelerated PlayerView (supports 1080p, 2K, 4K, HEVC, MKV, rotated camera videos)
                 AndroidView(
                     factory = { ctx ->
-                        TextureView(ctx).apply {
-                            surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                                override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
-                                    val surface = Surface(st)
-                                    val mp = MediaPlayer().apply {
-                                        setAudioAttributes(
-                                            AudioAttributes.Builder()
-                                                .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
-                                                .setUsage(AudioAttributes.USAGE_MEDIA)
-                                                .build()
-                                        )
-                                        setSurface(surface)
-
-                                        try {
-                                            isBuffering = true
-                                            playbackError = null
-                                            isPlayerPrepared = false
-
-                                            val fileOnDisk = if (item.path.isNotEmpty()) File(item.path) else null
-                                            if (fileOnDisk != null && fileOnDisk.exists()) {
-                                                setDataSource(item.path)
-                                            } else if (item.uri.startsWith("android.resource://") || item.uri.startsWith("content://")) {
-                                                setDataSource(ctx, Uri.parse(item.uri))
-                                            } else if (item.uri.startsWith("http://") || item.uri.startsWith("https://")) {
-                                                setDataSource(ctx, Uri.parse(item.uri))
-                                            } else {
-                                                setDataSource(ctx, Uri.parse(item.uri))
-                                            }
-
-                                            setOnPreparedListener { player ->
-                                                try {
-                                                    isPlayerPrepared = true
-                                                    isBuffering = false
-                                                    playbackError = null
-                                                    videoWidth = player.videoWidth.takeIf { it > 0 } ?: 1920
-                                                    videoHeight = player.videoHeight.takeIf { it > 0 } ?: 1080
-                                                    if (player.duration > 0) {
-                                                        totalDurationMs = player.duration.toLong().coerceAtLeast(1000L)
-                                                    }
-                                                    player.start()
-                                                    isPlaying = true
-                                                } catch (e: Exception) {
-                                                    e.printStackTrace()
-                                                }
-                                            }
-
-                                            setOnCompletionListener {
-                                                isPlaying = false
-                                                controlsVisible = true
-                                                currentPositionMs = totalDurationMs
-                                            }
-
-                                            setOnErrorListener { player, what, extra ->
-                                                isPlayerPrepared = false
-                                                isPlaying = false
-                                                isBuffering = false
-                                                playbackError = if (isBangla) "ভিডিও চালানো সম্ভব হয়নি" else "Unable to load video stream"
-                                                try {
-                                                    player.reset()
-                                                } catch (e: Exception) {
-                                                    e.printStackTrace()
-                                                }
-                                                true
-                                            }
-
-                                            prepareAsync()
-                                        } catch (e: Exception) {
-                                            e.printStackTrace()
-                                            isBuffering = false
-                                            playbackError = if (isBangla) "ভিডিও সোর্স পাওয়া যায়নি" else "Video source unavailable"
-                                        }
-                                    }
-                                    mediaPlayer = mp
-                                }
-
-                                override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {}
-                                override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
-                                    try {
-                                        isPlayerPrepared = false
-                                        mediaPlayer?.reset()
-                                        mediaPlayer?.release()
-                                        mediaPlayer = null
-                                    } catch (e: Exception) {
-                                        e.printStackTrace()
-                                    }
-                                    return true
-                                }
-                                override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
-                            }
+                        (LayoutInflater.from(ctx).inflate(R.layout.mx_player_view, null, false) as PlayerView).apply {
+                            player = exoPlayer
+                            useController = false
+                            keepScreenOn = true
                         }
                     },
-                    update = { textureView ->
-                        // Apply aspect ratio transformation matrix
-                        val matrix = Matrix()
-                        val vw = videoWidth.coerceAtLeast(1).toFloat()
-                        val vh = videoHeight.coerceAtLeast(1).toFloat()
-                        val sx = containerWidth / vw
-                        val sy = containerHeight / vh
-
-                        when (currentAspectRatioMode) {
-                            AspectRatioMode.FIT -> {
-                                val scale = minOf(sx, sy)
-                                matrix.setScale(scale / sx, scale / sy, containerWidth / 2f, containerHeight / 2f)
-                            }
-                            AspectRatioMode.CROP_FILL -> {
-                                val scale = maxOf(sx, sy)
-                                matrix.setScale(scale / sx, scale / sy, containerWidth / 2f, containerHeight / 2f)
-                            }
-                            AspectRatioMode.STRETCH -> {
-                                matrix.setScale(1f, 1f)
-                            }
-                            AspectRatioMode.ORIGINAL -> {
-                                matrix.setScale(1f / sx, 1f / sy, containerWidth / 2f, containerHeight / 2f)
-                            }
+                    update = { playerView ->
+                        if (playerView.player !== exoPlayer) {
+                            playerView.player = exoPlayer
                         }
-                        textureView.setTransform(matrix)
+                        playerView.resizeMode = when (currentAspectRatioMode) {
+                            AspectRatioMode.FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            AspectRatioMode.CROP_FILL -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                            AspectRatioMode.STRETCH -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                            AspectRatioMode.ORIGINAL -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        }
                     },
                     modifier = Modifier.fillMaxSize()
                 )
@@ -437,11 +616,22 @@ fun MxVideoPlayerDialog(
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
                                 )
-                                Button(
-                                    onClick = onDismiss,
-                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                                ) {
-                                    Text(if (isBangla) "ফিরে যান" else "Close")
+                                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    OutlinedButton(onClick = onDismiss) {
+                                        Text(if (isBangla) "ফিরে যান" else "Close")
+                                    }
+                                    Button(
+                                        onClick = { reloadTrigger++ },
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(if (isBangla) "আবার চেষ্টা" else "Retry")
+                                    }
                                 }
                             }
                         }
@@ -507,11 +697,7 @@ fun MxVideoPlayerDialog(
                                             if (abs(totalDragX) > 30f && abs(totalDragX) > abs(totalDragY)) {
                                                 dragMode = 3 // Horizontal Seek
                                             } else if (abs(totalDragY) > 30f) {
-                                                if (change.position.x > containerWidth / 2f) {
-                                                    dragMode = 1 // Right Vertical -> Volume
-                                                } else {
-                                                    dragMode = 2 // Left Vertical -> Brightness
-                                                }
+                                                dragMode = if (change.position.x > containerWidth / 2f) 1 else 2
                                             }
                                         }
 
@@ -581,7 +767,7 @@ fun MxVideoPlayerDialog(
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = Color.Black.copy(alpha = 0.8f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
                     ) {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -618,7 +804,7 @@ fun MxVideoPlayerDialog(
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = Color.Black.copy(alpha = 0.8f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
                     ) {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -651,7 +837,7 @@ fun MxVideoPlayerDialog(
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = Color.Black.copy(alpha = 0.85f),
-                        border = androidx.compose.foundation.BorderStroke(1.5.dp, ElectricIndigo)
+                        border = BorderStroke(1.5.dp, ElectricIndigo)
                     ) {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -757,7 +943,16 @@ fun MxVideoPlayerDialog(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    // 1080p Badge
+                                    val shortSide = minOf(videoWidth, videoHeight)
+                                    val longSide = maxOf(videoWidth, videoHeight)
+                                    val qualityBadge = when {
+                                        shortSide >= 2160 || longSide >= 3840 -> "4K UHD"
+                                        shortSide >= 1440 || longSide >= 2560 -> "2K QHD"
+                                        shortSide >= 1080 || longSide >= 1920 -> "1080p FHD"
+                                        shortSide >= 720 -> "720p HD"
+                                        else -> "SD"
+                                    }
+
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(4.dp))
@@ -765,7 +960,7 @@ fun MxVideoPlayerDialog(
                                             .padding(horizontal = 5.dp, vertical = 2.dp)
                                     ) {
                                         Text(
-                                            text = if (videoHeight >= 1080) "1080p FHD" else "720p HD",
+                                            text = qualityBadge,
                                             fontSize = 9.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = NeonCyan
@@ -773,10 +968,53 @@ fun MxVideoPlayerDialog(
                                     }
 
                                     Text(
-                                        text = " • Hardware Accelerated",
-                                        color = Color.White.copy(alpha = 0.6f),
+                                        text = " • ${videoWidth}×${videoHeight} • Media3",
+                                        color = Color.White.copy(alpha = 0.65f),
                                         fontSize = 11.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.padding(start = 4.dp)
+                                    )
+                                }
+                            }
+
+                            // Quality Selector Button
+                            val selectedQualityOption = qualityOptions.firstOrNull { it.id == selectedQualityId }
+                            val qualityBtnLabel = if (selectedQualityOption == null || selectedQualityOption.id == "auto") {
+                                val (_, activeShort) = formatQualityLabels(videoWidth, videoHeight)
+                                if (isBangla) "অটো ($activeShort)" else "Auto ($activeShort)"
+                            } else {
+                                selectedQualityOption.shortLabel
+                            }
+                            Surface(
+                                onClick = { showQualityDialog = true },
+                                shape = RoundedCornerShape(16.dp),
+                                color = if (selectedQualityId != "auto") NeonCyan.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.14f),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (selectedQualityId != "auto") NeonCyan else Color.White.copy(alpha = 0.3f)
+                                ),
+                                modifier = Modifier
+                                    .padding(end = 4.dp)
+                                    .testTag("mx_quality_btn")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.HighQuality,
+                                        contentDescription = if (isBangla) "ভিডিও কোয়ালিটি" else "Video Quality",
+                                        tint = if (selectedQualityId != "auto") NeonCyan else Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = qualityBtnLabel,
+                                        color = if (selectedQualityId != "auto") NeonCyan else Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1
                                     )
                                 }
                             }
@@ -980,6 +1218,168 @@ fun MxVideoPlayerDialog(
                                     }
                                 ) {
                                     Icon(Icons.Default.Forward10, contentDescription = "Forward 10s", tint = Color.White)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // MANUAL VIDEO QUALITY SELECTION MODAL OVERLAY
+                if (showQualityDialog) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.65f))
+                            .clickable { showQualityDialog = false }
+                            .padding(24.dp)
+                            .testTag("mx_quality_dialog")
+                    ) {
+                        Card(
+                            shape = RoundedCornerShape(20.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF161922)),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .widthIn(max = 420.dp)
+                                .clickable(enabled = false) {}
+                        ) {
+                            Column(modifier = Modifier.padding(20.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.HighQuality,
+                                            contentDescription = null,
+                                            tint = NeonCyan,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = if (isBangla) "ভিডিও কোয়ালিটি নির্বাচন" else "Video Quality",
+                                            color = Color.White,
+                                            fontSize = 17.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    Text(
+                                        text = "${videoWidth}×${videoHeight}",
+                                        color = GoldenVault,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = if (isBangla) {
+                                        "মিডিয়া সোর্সে উপলব্ধ রেজোলিউশন ট্র্যাক থেকে বেছে নিন"
+                                    } else {
+                                        "Switch between available resolution tracks from the media source"
+                                    },
+                                    color = Color.White.copy(alpha = 0.65f),
+                                    fontSize = 12.sp
+                                )
+
+                                Spacer(modifier = Modifier.height(12.dp))
+                                HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 280.dp)
+                                        .verticalScroll(rememberScrollState())
+                                ) {
+                                    qualityOptions.forEach { option ->
+                                        val isSelected = option.id == selectedQualityId
+                                        val isActiveAuto = option.id == "auto" && selectedQualityId == "auto"
+                                        val detailText = if (option.id == "auto") {
+                                            val (activeLabel, _) = formatQualityLabels(videoWidth, videoHeight)
+                                            if (isBangla) "বর্তমান: $activeLabel (${videoWidth}×${videoHeight})" else "Active: $activeLabel (${videoWidth}×${videoHeight})"
+                                        } else {
+                                            option.detail
+                                        }
+
+                                        Surface(
+                                            onClick = {
+                                                selectVideoQuality(option)
+                                                showQualityDialog = false
+                                            },
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = if (isSelected || isActiveAuto) {
+                                                NeonCyan.copy(alpha = 0.16f)
+                                            } else {
+                                                Color.White.copy(alpha = 0.05f)
+                                            },
+                                            border = if (isSelected || isActiveAuto) {
+                                                BorderStroke(1.dp, NeonCyan.copy(alpha = 0.7f))
+                                            } else {
+                                                null
+                                            },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("quality_option_${option.id}")
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Text(
+                                                            text = option.label,
+                                                            color = if (isSelected || isActiveAuto) NeonCyan else Color.White,
+                                                            fontSize = 14.sp,
+                                                            fontWeight = FontWeight.SemiBold
+                                                        )
+                                                        if (!option.isSupported && option.id != "auto") {
+                                                            Spacer(modifier = Modifier.width(6.dp))
+                                                            Text(
+                                                                text = if (isBangla) "(সফটওয়্যার)" else "(SW)",
+                                                                color = GoldenVault,
+                                                                fontSize = 10.sp,
+                                                                fontWeight = FontWeight.Bold
+                                                            )
+                                                        }
+                                                    }
+                                                    Text(
+                                                        text = detailText,
+                                                        color = Color.White.copy(alpha = 0.65f),
+                                                        fontSize = 11.sp
+                                                    )
+                                                }
+                                                if (isSelected || isActiveAuto) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Check,
+                                                        contentDescription = "Selected",
+                                                        tint = NeonCyan,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Row(
+                                    horizontalArrangement = Arrangement.End,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    TextButton(onClick = { showQualityDialog = false }) {
+                                        Text(
+                                            text = if (isBangla) "বন্ধ করুন" else "Close",
+                                            color = Color.White.copy(alpha = 0.85f)
+                                        )
+                                    }
                                 }
                             }
                         }

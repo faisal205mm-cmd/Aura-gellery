@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.data.model.MediaItem
 import com.example.data.model.StorageType
 import com.example.data.repository.GalleryRepository
+import com.example.ui.components.formatQualityLabels
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -80,5 +81,16 @@ class ExampleRobolectricTest {
     repo.deleteMultipleMedia(listOf(itemToDelete))
     val remaining = repo.mediaList.value
     assertFalse(remaining.any { it.uri == itemToDelete.uri })
+  }
+
+  @Test
+  fun `verify video quality labels across resolutions`() {
+    assertEquals("2160p 4K UHD" to "4K", formatQualityLabels(3840, 2160))
+    assertEquals("1440p 2K QHD" to "2K", formatQualityLabels(2560, 1440))
+    assertEquals("1080p Full HD" to "1080p", formatQualityLabels(1920, 1080))
+    assertEquals("1080p Full HD" to "1080p", formatQualityLabels(1080, 1920))
+    assertEquals("720p HD" to "720p", formatQualityLabels(1280, 720))
+    assertEquals("480p" to "480p", formatQualityLabels(854, 480))
+    assertEquals("Standard" to "SD", formatQualityLabels(0, 0))
   }
 }

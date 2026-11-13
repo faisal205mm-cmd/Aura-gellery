@@ -194,7 +194,9 @@ class GalleryRepository(
                 MediaStore.Video.Media.SIZE,
                 MediaStore.Video.Media.MIME_TYPE,
                 MediaStore.Video.Media.BUCKET_DISPLAY_NAME,
-                MediaStore.Video.Media.DURATION
+                MediaStore.Video.Media.DURATION,
+                MediaStore.Video.Media.WIDTH,
+                MediaStore.Video.Media.HEIGHT
             )
 
             context.contentResolver.query(
@@ -212,12 +214,16 @@ class GalleryRepository(
                 val mimeCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.MIME_TYPE)
                 val bucketCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.BUCKET_DISPLAY_NAME)
                 val durCol = cursor.getColumnIndex(MediaStore.Video.Media.DURATION)
+                val widthCol = cursor.getColumnIndex(MediaStore.Video.Media.WIDTH)
+                val heightCol = cursor.getColumnIndex(MediaStore.Video.Media.HEIGHT)
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idCol)
                     val contentUri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
                     val path = cursor.getString(pathCol) ?: ""
                     val isSd = isPathOnSdCard(path)
+                    val w = if (widthCol >= 0) cursor.getInt(widthCol) else 0
+                    val h = if (heightCol >= 0) cursor.getInt(heightCol) else 0
 
                     items.add(
                         MediaItem(
@@ -231,7 +237,9 @@ class GalleryRepository(
                             isVideo = true,
                             duration = if (durCol >= 0) cursor.getLong(durCol) else 15000L,
                             storageType = if (isSd) StorageType.SD_CARD else StorageType.INTERNAL,
-                            albumName = cursor.getString(bucketCol) ?: "Videos"
+                            albumName = cursor.getString(bucketCol) ?: "Videos",
+                            width = if (w > 0) w else 1920,
+                            height = if (h > 0) h else 1080
                         )
                     )
                 }
