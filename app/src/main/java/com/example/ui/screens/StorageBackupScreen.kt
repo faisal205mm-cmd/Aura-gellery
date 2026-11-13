@@ -17,10 +17,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudSync
-import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.SdCard
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.Sync
@@ -267,7 +267,7 @@ fun StorageBackupScreen(
                         .fillMaxWidth()
                         .testTag("transfer_all_sdcard_btn")
                 ) {
-                    Icon(Icons.Default.DriveFileMove, contentDescription = null, tint = Color.Black)
+                    Icon(Icons.AutoMirrored.Filled.DriveFileMove, contentDescription = null, tint = Color.Black)
                     Text(
                         text = if (isBangla) "সব ছবি এসডি কার্ডে স্থানান্তর করুন" else "Transfer Photos to SD Card",
                         color = Color.Black,

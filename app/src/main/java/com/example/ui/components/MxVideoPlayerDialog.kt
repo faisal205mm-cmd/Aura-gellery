@@ -37,6 +37,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeMute
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.BrightnessHigh
 import androidx.compose.material.icons.filled.ErrorOutline
@@ -47,9 +50,6 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay10
-import androidx.compose.material.icons.filled.VolumeDown
-import androidx.compose.material.icons.filled.VolumeMute
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -589,9 +589,9 @@ fun MxVideoPlayerDialog(
                         ) {
                             Icon(
                                 imageVector = when {
-                                    currentVolumePercent == 0 -> Icons.Default.VolumeMute
-                                    currentVolumePercent < 50 -> Icons.Default.VolumeDown
-                                    else -> Icons.Default.VolumeUp
+                                    currentVolumePercent == 0 -> Icons.AutoMirrored.Filled.VolumeMute
+                                    currentVolumePercent < 50 -> Icons.AutoMirrored.Filled.VolumeDown
+                                    else -> Icons.AutoMirrored.Filled.VolumeUp
                                 },
                                 contentDescription = null,
                                 tint = NeonCyan,

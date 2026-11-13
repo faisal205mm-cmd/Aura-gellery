@@ -24,9 +24,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.FolderSpecial
@@ -341,7 +341,7 @@ fun MediaViewerDialog(
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                                 IconButton(onClick = { showInfoSheet = false }) {
-                                    Icon(Icons.Default.DriveFileMove, contentDescription = "Close", tint = MaterialTheme.colorScheme.primary)
+                                    Icon(Icons.AutoMirrored.Filled.DriveFileMove, contentDescription = "Close", tint = MaterialTheme.colorScheme.primary)
                                 }
                             }
 

@@ -27,7 +27,7 @@ class ExampleRobolectricTest {
   @Test
   fun `verify vault default pin and custom pin change`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
-    val repo = GalleryRepository(context)
+    val repo = GalleryRepository(context, autoLoad = false)
 
     // Default PIN verification
     assertTrue(repo.verifyPin("1234"))
@@ -43,7 +43,7 @@ class ExampleRobolectricTest {
   @Test
   fun `verify storage migration to sd card`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
-    val repo = GalleryRepository(context)
+    val repo = GalleryRepository(context, autoLoad = false)
 
     val item = MediaItem(
       id = 1L,
@@ -64,14 +64,21 @@ class ExampleRobolectricTest {
   @Test
   fun `verify delete multiple media`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
-    val repo = GalleryRepository(context)
+    val repo = GalleryRepository(context, autoLoad = false)
 
-    val currentItems = repo.mediaList.value
-    if (currentItems.isNotEmpty()) {
-      val itemToDelete = currentItems.first()
-      repo.deleteMultipleMedia(listOf(itemToDelete))
-      val remaining = repo.mediaList.value
-      assertFalse(remaining.any { it.uri == itemToDelete.uri })
-    }
+    val itemToDelete = MediaItem(
+      id = 2L,
+      uri = "content://media/external/images/media/2",
+      name = "delete_me.jpg",
+      path = "/storage/emulated/0/DCIM/delete_me.jpg",
+      dateAdded = 2000L,
+      size = 1500L,
+      mimeType = "image/jpeg",
+      storageType = StorageType.INTERNAL
+    )
+
+    repo.deleteMultipleMedia(listOf(itemToDelete))
+    val remaining = repo.mediaList.value
+    assertFalse(remaining.any { it.uri == itemToDelete.uri })
   }
 }

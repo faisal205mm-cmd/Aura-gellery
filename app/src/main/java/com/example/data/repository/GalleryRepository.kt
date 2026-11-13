@@ -23,7 +23,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-class GalleryRepository(private val context: Context) {
+class GalleryRepository(
+    private val context: Context,
+    autoLoad: Boolean = true
+) {
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences("aura_gallery_prefs", Context.MODE_PRIVATE)
@@ -47,9 +50,11 @@ class GalleryRepository(private val context: Context) {
     val isBangla: StateFlow<Boolean> = _isBangla.asStateFlow()
 
     init {
-        // Load initial data asynchronously
-        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
-            refreshMedia()
+        if (autoLoad) {
+            // Load initial data asynchronously
+            CoroutineScope(Dispatchers.IO).launch {
+                refreshMedia()
+            }
         }
     }
 
