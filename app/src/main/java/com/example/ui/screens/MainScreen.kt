@@ -101,8 +101,8 @@ fun MainScreen(viewModel: GalleryViewModel) {
         }
     }
 
-    // Back handling for album detail and search
-    BackHandler(enabled = selectedAlbum != null || isSearchActive || multiSelectMode) {
+    // Back handling for album detail and search (disabled while full-screen viewer/player handles Back)
+    BackHandler(enabled = selectedVideoForMxPlayer == null && selectedItem == null && (selectedAlbum != null || isSearchActive || multiSelectMode)) {
         when {
             selectedAlbum != null -> viewModel.closeAlbum()
             isSearchActive -> {
@@ -113,7 +113,8 @@ fun MainScreen(viewModel: GalleryViewModel) {
         }
     }
 
-    Scaffold(
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
         topBar = {
             TopAppBar(
                 title = {
@@ -348,27 +349,30 @@ fun MainScreen(viewModel: GalleryViewModel) {
                 }
             }
         }
+    }
 
-        // Full Screen Media Viewer Dialog
-        selectedItem?.let { item ->
-            MediaViewerDialog(
-                item = item,
-                isBangla = isBangla,
-                onDismiss = { viewModel.selectItemForDetail(null) },
-                onToggleFavorite = { viewModel.toggleFavorite(it) },
-                onMoveToStorage = { itm, target ->
-                    if (target == StorageType.SD_CARD) viewModel.moveToSdCard(itm)
-                    else viewModel.moveToInternal(itm)
-                },
-                onMoveToVault = { viewModel.moveToVault(it) },
-                onRestoreFromVault = { viewModel.restoreFromVault(it) },
-                onAddToAlbum = { viewModel.showAddToAlbumDialog(it) },
-                onDelete = { viewModel.deleteMedia(it) },
-                onPlayVideoInMxPlayer = { viewModel.playVideoInMxPlayer(it) }
-            )
+        // Full Screen Media Viewer Dialog (hidden while MX Player is active so Dialog window never covers SurfaceView)
+        if (selectedVideoForMxPlayer == null) {
+            selectedItem?.let { item ->
+                MediaViewerDialog(
+                    item = item,
+                    isBangla = isBangla,
+                    onDismiss = { viewModel.selectItemForDetail(null) },
+                    onToggleFavorite = { viewModel.toggleFavorite(it) },
+                    onMoveToStorage = { itm, target ->
+                        if (target == StorageType.SD_CARD) viewModel.moveToSdCard(itm)
+                        else viewModel.moveToInternal(itm)
+                    },
+                    onMoveToVault = { viewModel.moveToVault(it) },
+                    onRestoreFromVault = { viewModel.restoreFromVault(it) },
+                    onAddToAlbum = { viewModel.showAddToAlbumDialog(it) },
+                    onDelete = { viewModel.deleteMedia(it) },
+                    onPlayVideoInMxPlayer = { viewModel.playVideoInMxPlayer(it) }
+                )
+            }
         }
 
-        // MX Player High Quality Video Player Dialog
+        // MX Player High Quality Video Player (rendered in Activity window for SurfaceView compatibility)
         selectedVideoForMxPlayer?.let { videoItem ->
             MxVideoPlayerDialog(
                 item = videoItem,

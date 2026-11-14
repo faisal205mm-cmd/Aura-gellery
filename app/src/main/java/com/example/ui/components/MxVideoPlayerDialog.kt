@@ -4,17 +4,21 @@ import android.app.Activity
 import android.content.Context
 import android.media.AudioManager
 import android.net.Uri
+import android.os.Build
 import android.view.LayoutInflater
 import android.view.WindowManager
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,17 +28,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
@@ -42,37 +43,30 @@ import androidx.compose.material.icons.automirrored.filled.VolumeMute
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.BrightnessHigh
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.HighQuality
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay10
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -87,14 +81,16 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
@@ -107,130 +103,30 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.mediacodec.MediaCodecRenderer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.exoplayer.upstream.DefaultAllocator
+import androidx.media3.exoplayer.util.EventLogger
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.example.R
 import com.example.data.model.MediaItem
+import com.example.player.CapabilityAwareMediaCodecSelector
+import com.example.player.DecoderStrategy
+import com.example.player.DeviceCapabilityInspector
+import com.example.player.PlaybackDiagnosticsCollector
+import com.example.player.PlaybackDiagnosticsState
+import com.example.player.RenderSurfaceMode
 import com.example.ui.theme.ElectricIndigo
 import com.example.ui.theme.GoldenVault
 import com.example.ui.theme.NeonCyan
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.io.File
 import java.util.Locale
 import kotlin.math.abs
 import androidx.media3.common.MediaItem as Media3MediaItem
-
-enum class AspectRatioMode {
-    FIT,        // Letterbox
-    STRETCH,    // Stretch to exact screen size
-    CROP_FILL,  // Zoom in to fill screen with no black bars
-    ORIGINAL    // 1:1 original aspect ratio
-}
-
-private data class VideoQualityOption(
-    val id: String,
-    val label: String,
-    val shortLabel: String,
-    val detail: String,
-    val width: Int,
-    val height: Int,
-    val bitrate: Int,
-    val trackGroup: Tracks.Group?,
-    val trackIndex: Int,
-    val isSupported: Boolean = true
-)
-
-internal fun formatQualityLabels(width: Int, height: Int): Pair<String, String> {
-    val shortSide = minOf(width, height)
-    val longSide = maxOf(width, height)
-    return when {
-        shortSide >= 2160 || longSide >= 3840 -> "2160p 4K UHD" to "4K"
-        shortSide >= 1440 || longSide >= 2560 -> "1440p 2K QHD" to "2K"
-        shortSide >= 1080 || longSide >= 1920 -> "1080p Full HD" to "1080p"
-        shortSide >= 720 -> "720p HD" to "720p"
-        shortSide > 0 -> "${shortSide}p" to "${shortSide}p"
-        else -> "Standard" to "SD"
-    }
-}
-
-private fun extractVideoQualityOptions(tracks: Tracks, isBangla: Boolean): List<VideoQualityOption> {
-    val trackOptions = mutableListOf<VideoQualityOption>()
-    tracks.groups.forEachIndexed { groupIdx, group ->
-        if (group.type == C.TRACK_TYPE_VIDEO) {
-            for (trackIdx in 0 until group.length) {
-                val format = group.getTrackFormat(trackIdx)
-                if (format.width > 0 && format.height > 0) {
-                    val (label, shortLabel) = formatQualityLabels(format.width, format.height)
-                    val bitratePart = if (format.bitrate > 0) {
-                        String.format(Locale.US, " • %.1f Mbps", format.bitrate / 1_000_000f)
-                    } else {
-                        ""
-                    }
-                    val fpsPart = if (format.frameRate > 0f) {
-                        " • ${format.frameRate.toInt()}fps"
-                    } else {
-                        ""
-                    }
-                    trackOptions.add(
-                        VideoQualityOption(
-                            id = "${groupIdx}_$trackIdx",
-                            label = label,
-                            shortLabel = shortLabel,
-                            detail = "${format.width}×${format.height}$fpsPart$bitratePart",
-                            width = format.width,
-                            height = format.height,
-                            bitrate = format.bitrate,
-                            trackGroup = group,
-                            trackIndex = trackIdx,
-                            isSupported = group.isTrackSupported(trackIdx)
-                        )
-                    )
-                }
-            }
-        }
-    }
-
-    val sortedTracks = trackOptions.sortedWith(
-        compareByDescending<VideoQualityOption> { minOf(it.width, it.height) }
-            .thenByDescending { maxOf(it.width, it.height) }
-            .thenByDescending { it.bitrate }
-    )
-
-    val autoOption = VideoQualityOption(
-        id = "auto",
-        label = if (isBangla) "অটো (স্বয়ংক্রিয়)" else "Auto (Recommended)",
-        shortLabel = if (isBangla) "অটো" else "Auto",
-        detail = if (isBangla) "সর্বোচ্চ ও স্থিতিশীল কোয়ালিটি নির্বাচন করে" else "Automatically picks best resolution",
-        width = 0,
-        height = 0,
-        bitrate = 0,
-        trackGroup = null,
-        trackIndex = -1
-    )
-
-    return listOf(autoOption) + sortedTracks
-}
-
-private fun resolvePlayableUri(item: MediaItem): Uri {
-    val uriStr = item.uri.trim()
-    if (uriStr.startsWith("content://") ||
-        uriStr.startsWith("android.resource://") ||
-        uriStr.startsWith("http://") ||
-        uriStr.startsWith("https://") ||
-        uriStr.startsWith("file://")
-    ) {
-        return Uri.parse(uriStr)
-    }
-    if (item.path.isNotBlank()) {
-        return Uri.fromFile(File(item.path))
-    }
-    return Uri.parse(uriStr)
-}
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -240,41 +136,52 @@ fun MxVideoPlayerDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
 
-    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-    val maxVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
+    BackHandler(onBack = onDismiss)
 
-    // Media3 ExoPlayer states
-    var isPlayerPrepared by remember { mutableStateOf(false) }
-    var isPlaying by remember { mutableStateOf(false) }
-    var isBuffering by remember { mutableStateOf(true) }
-    var playbackError by remember { mutableStateOf<String?>(null) }
-    var reloadTrigger by remember { mutableIntStateOf(0) }
-    var useSoftwareDecoder by remember(item.uri, item.path) { mutableStateOf(false) }
+    val deviceProfile = remember(context) { DeviceCapabilityInspector.inspect(context) }
+    val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    val maxVolume = remember(audioManager) { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
+
+    // Playback & recovery states
+    var isPlayerPrepared by remember(item.uri, item.path) { mutableStateOf(false) }
+    var isPlaying by remember(item.uri, item.path) { mutableStateOf(false) }
+    var isBuffering by remember(item.uri, item.path) { mutableStateOf(true) }
+    var playbackError by remember(item.uri, item.path) { mutableStateOf<String?>(null) }
+    var reloadTrigger by remember(item.uri, item.path) { mutableIntStateOf(0) }
+
+    var surfaceMode by remember(item.uri, item.path) { mutableStateOf(deviceProfile.recommendedSurfaceMode) }
+    var decoderStrategy by remember(item.uri, item.path) { mutableStateOf(DecoderStrategy.HARDWARE_FIRST) }
+    var failedDecoderNames by remember(item.uri, item.path) { mutableStateOf<Set<String>>(emptySet()) }
     var resumePositionMs by remember(item.uri, item.path) { mutableLongStateOf(0L) }
+    var autoSurfaceRetryAttempted by remember(item.uri, item.path) { mutableStateOf(false) }
 
-    var currentPositionMs by remember { mutableLongStateOf(0L) }
-    var totalDurationMs by remember { mutableLongStateOf(item.duration.coerceAtLeast(1000L)) }
-    var videoWidth by remember { mutableIntStateOf(item.width.coerceAtLeast(1)) }
-    var videoHeight by remember { mutableIntStateOf(item.height.coerceAtLeast(1)) }
+    var currentPositionMs by remember(item.uri, item.path) { mutableLongStateOf(0L) }
+    var totalDurationMs by remember(item.uri, item.path) { mutableLongStateOf(item.duration.coerceAtLeast(1000L)) }
+    var videoWidth by remember(item.uri, item.path) { mutableIntStateOf(item.width.coerceAtLeast(1)) }
+    var videoHeight by remember(item.uri, item.path) { mutableIntStateOf(item.height.coerceAtLeast(1)) }
 
-    // MX Player Controls & Overlays
+    // Controls & modal states
     var controlsVisible by remember { mutableStateOf(true) }
     var isScreenLocked by remember { mutableStateOf(false) }
     var currentAspectRatioMode by remember { mutableStateOf(AspectRatioMode.FIT) }
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var showSpeedMenu by remember { mutableStateOf(false) }
     var showQualityDialog by remember { mutableStateOf(false) }
-    var qualityOptions by remember {
+    var showAudioSubDialog by remember { mutableStateOf(false) }
+    var showDiagnosticsDialog by remember { mutableStateOf(false) }
+
+    var qualityOptions by remember(item.uri, item.path) {
         mutableStateOf(
             listOf(
                 VideoQualityOption(
                     id = "auto",
                     label = if (isBangla) "অটো (স্বয়ংক্রিয়)" else "Auto (Recommended)",
                     shortLabel = if (isBangla) "অটো" else "Auto",
-                    detail = if (isBangla) "সর্বোচ্চ ও স্থিতিশীল কোয়ালিটি নির্বাচন করে" else "Automatically picks best resolution",
+                    detail = if (isBangla) "ডিভাইসের সক্ষমতা অনুযায়ী সেরা কোয়ালিটি" else "Adapts to device decoder & capabilities",
                     width = 0,
                     height = 0,
                     bitrate = 0,
@@ -285,43 +192,59 @@ fun MxVideoPlayerDialog(
         )
     }
     var selectedQualityId by remember(item.uri, item.path) { mutableStateOf("auto") }
+    var audioTrackOptions by remember(item.uri, item.path) { mutableStateOf<List<AudioTrackOption>>(emptyList()) }
+    var subtitleTrackOptions by remember(item.uri, item.path) { mutableStateOf<List<SubtitleTrackOption>>(emptyList()) }
+    var externalSubtitleUri by remember(item.uri, item.path) { mutableStateOf<Uri?>(null) }
+    var externalSubtitleName by remember(item.uri, item.path) { mutableStateOf<String?>(null) }
 
-    // Gesture HUD Overlays (Volume, Brightness, Seek)
+    var diagnosticsState by remember(item.uri, item.path) {
+        mutableStateOf(
+            PlaybackDiagnosticsState(
+                surfaceMode = surfaceMode,
+                decoderStrategy = decoderStrategy
+            )
+        )
+    }
+
+    // Gesture HUD Overlays
     var showVolumeOverlay by remember { mutableStateOf(false) }
     var currentVolumePercent by remember { mutableIntStateOf(0) }
-
     var showBrightnessOverlay by remember { mutableStateOf(false) }
     var currentBrightnessPercent by remember { mutableIntStateOf(50) }
-
     var showSeekOverlay by remember { mutableStateOf(false) }
     var seekDeltaSeconds by remember { mutableIntStateOf(0) }
     var seekTargetMs by remember { mutableLongStateOf(0L) }
-
-    // Quick Double Tap Feedback (+10s / -10s)
     var showRewindFeedback by remember { mutableStateOf(false) }
     var showForwardFeedback by remember { mutableStateOf(false) }
 
-    // Configure ExoPlayer with decoder fallback, software codec recovery, & unconstrained 1080p/4K/8K track selection
-    val exoPlayer = remember(item.uri, item.path, reloadTrigger, useSoftwareDecoder) {
-        val codecSelector = if (useSoftwareDecoder) {
-            MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
-                val allDecoders = MediaCodecSelector.DEFAULT.getDecoderInfos(
-                    mimeType,
-                    requiresSecureDecoder,
-                    requiresTunnelingDecoder
-                )
-                val softwareDecoders = allDecoders.filter { it.softwareOnly }
-                val hardwareDecoders = allDecoders.filterNot { it.softwareOnly }
-                softwareDecoders + hardwareDecoders
-            }
-        } else {
-            MediaCodecSelector.DEFAULT
+    // External Subtitle Document Picker (.srt, .vtt, .ass, .ssa)
+    val subtitlePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            externalSubtitleUri = uri
+            externalSubtitleName = uri.lastPathSegment?.substringAfterLast('/') ?: "External Subtitle"
         }
+    }
+
+    // Single capability-aware ExoPlayer instance; recreated only when media, decoder strategy, external sub, or retry changes
+    val exoPlayer = remember(
+        item.uri,
+        item.path,
+        reloadTrigger,
+        decoderStrategy,
+        failedDecoderNames,
+        externalSubtitleUri
+    ) {
+        val codecSelector = CapabilityAwareMediaCodecSelector(
+            strategy = decoderStrategy,
+            failedDecoderNames = failedDecoderNames
+        )
 
         val renderersFactory = DefaultRenderersFactory(context)
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(codecSelector)
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
             .forceEnableMediaCodecAsynchronousQueueing()
 
         val trackSelector = DefaultTrackSelector(context).apply {
@@ -339,19 +262,24 @@ fun MxVideoPlayerDialog(
             )
         }
 
+        val bufferCfg = deviceProfile.bufferConfig
+        val loadControl = DefaultLoadControl.Builder()
+            .setAllocator(DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE))
+            .setBufferDurationsMs(
+                bufferCfg.minBufferMs,
+                bufferCfg.maxBufferMs,
+                bufferCfg.bufferForPlaybackMs,
+                bufferCfg.bufferForPlaybackAfterRebufferMs
+            )
+            .setTargetBufferBytes(bufferCfg.targetBufferBytes)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .setBackBuffer(bufferCfg.backBufferDurationMs, false)
+            .build()
+
         val extractorsFactory = DefaultExtractorsFactory()
             .setConstantBitrateSeekingEnabled(true)
 
         val mediaSourceFactory = DefaultMediaSourceFactory(context, extractorsFactory)
-
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                /* minBufferMs = */ 2500,
-                /* maxBufferMs = */ 30000,
-                /* bufferForPlaybackMs = */ 500,
-                /* bufferForPlaybackAfterRebufferMs = */ 1500
-            )
-            .build()
 
         val audioAttributes = AudioAttributes.Builder()
             .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
@@ -410,7 +338,6 @@ fun MxVideoPlayerDialog(
     fun selectVideoQuality(option: VideoQualityOption) {
         if (option.id == selectedQualityId) return
         val videoTrackCount = qualityOptions.count { it.trackGroup != null }
-        // Single-track local files only have one native video track: avoid re-configuring MediaCodec unnecessarily
         if (videoTrackCount <= 1) {
             selectedQualityId = option.id
             return
@@ -435,10 +362,41 @@ fun MxVideoPlayerDialog(
         }
     }
 
+    fun selectAudioTrack(option: AudioTrackOption) {
+        val group = option.trackGroup ?: return
+        if (option.trackIndex < 0) return
+        try {
+            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                .buildUpon()
+                .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, option.trackIndex))
+                .build()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun selectSubtitleTrack(option: SubtitleTrackOption) {
+        try {
+            val builder = exoPlayer.trackSelectionParameters.buildUpon()
+            if (option.isOffOption || option.trackGroup == null || option.trackIndex < 0) {
+                builder
+                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+            } else {
+                builder
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                    .setOverrideForType(TrackSelectionOverride(option.trackGroup.mediaTrackGroup, option.trackIndex))
+            }
+            exoPlayer.trackSelectionParameters = builder.build()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     var hasRenderedFirstFrame by remember(exoPlayer) { mutableStateOf(false) }
     var hasVideoTracks by remember(exoPlayer) { mutableStateOf(false) }
 
-    // Bind media item & listener, release cleanly on disposal or reload
+    // Bind media, listeners, EventLogger & DiagnosticsCollector; release strictly on dispose
     DisposableEffect(exoPlayer) {
         isPlayerPrepared = false
         isBuffering = true
@@ -446,12 +404,22 @@ fun MxVideoPlayerDialog(
         hasRenderedFirstFrame = false
         hasVideoTracks = false
 
+        val eventLogger = EventLogger("AuraExoEvent")
+        val diagnosticsCollector = PlaybackDiagnosticsCollector(
+            initialSurfaceMode = surfaceMode,
+            initialStrategy = decoderStrategy,
+            onStateChanged = { nextDiag ->
+                diagnosticsState = nextDiag.copy(
+                    surfaceMode = surfaceMode,
+                    decoderStrategy = decoderStrategy
+                )
+            }
+        )
+
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 when (playbackState) {
-                    Player.STATE_BUFFERING -> {
-                        isBuffering = true
-                    }
+                    Player.STATE_BUFFERING -> isBuffering = true
                     Player.STATE_READY -> {
                         isPlayerPrepared = true
                         isBuffering = false
@@ -467,9 +435,7 @@ fun MxVideoPlayerDialog(
                         controlsVisible = true
                         currentPositionMs = totalDurationMs
                     }
-                    Player.STATE_IDLE -> {
-                        isBuffering = false
-                    }
+                    Player.STATE_IDLE -> isBuffering = false
                 }
             }
 
@@ -491,22 +457,22 @@ fun MxVideoPlayerDialog(
             override fun onTracksChanged(tracks: Tracks) {
                 val videoGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO && it.length > 0 }
                 hasVideoTracks = videoGroups.isNotEmpty()
-                if (videoGroups.isNotEmpty() && videoGroups.none { it.isSelected } && !useSoftwareDecoder) {
-                    // Hardware renderer rejected all video tracks (would play audio-only); switch to software decoder
+                if (videoGroups.isNotEmpty() && videoGroups.none { it.isSelected } && decoderStrategy == DecoderStrategy.HARDWARE_FIRST) {
                     resumePositionMs = exoPlayer.currentPosition.coerceAtLeast(currentPositionMs).coerceAtLeast(0L)
                     playbackError = null
                     isBuffering = true
-                    useSoftwareDecoder = true
+                    decoderStrategy = DecoderStrategy.SOFTWARE_FALLBACK
                     return
                 }
 
                 val extracted = extractVideoQualityOptions(tracks, isBangla)
                 qualityOptions = extracted
+                audioTrackOptions = extractAudioTrackOptions(tracks, isBangla)
+                subtitleTrackOptions = extractSubtitleTrackOptions(tracks, isBangla)
+
                 val videoTrackCount = extracted.count { it.trackGroup != null }
-                if (videoTrackCount <= 1) {
-                    // Keep user's UI selection ("auto" or single track) without forcing an override
-                    return
-                }
+                if (videoTrackCount <= 1) return
+
                 val hasVideoOverride = exoPlayer.trackSelectionParameters.overrides.values.any {
                     it.type == C.TRACK_TYPE_VIDEO
                 }
@@ -541,20 +507,22 @@ fun MxVideoPlayerDialog(
                     error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ||
                     error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES
 
-                if (!useSoftwareDecoder && isDecoderFailure) {
-                    // Seamlessly switch to software MediaCodec decoders and resume playback at current position
-                    val safePos = exoPlayer.currentPosition.coerceAtLeast(currentPositionMs).coerceAtLeast(0L)
-                    resumePositionMs = safePos
+                val decoderInitException = error.cause as? MediaCodecRenderer.DecoderInitializationException
+                val failedCodecName = decoderInitException?.codecInfo?.name
+                if (!failedCodecName.isNullOrBlank()) {
+                    failedDecoderNames = failedDecoderNames + failedCodecName
+                }
+
+                if (decoderStrategy == DecoderStrategy.HARDWARE_FIRST && isDecoderFailure) {
+                    resumePositionMs = exoPlayer.currentPosition.coerceAtLeast(currentPositionMs).coerceAtLeast(0L)
                     playbackError = null
                     isBuffering = true
-                    useSoftwareDecoder = true
+                    decoderStrategy = DecoderStrategy.SOFTWARE_FALLBACK
                     return
                 }
 
-                if (useSoftwareDecoder && isDecoderFailure && selectedQualityId != "auto") {
-                    // Revert failing manual track override back to Auto and retry cleanly
-                    val safePos = exoPlayer.currentPosition.coerceAtLeast(currentPositionMs).coerceAtLeast(0L)
-                    resumePositionMs = safePos
+                if (decoderStrategy == DecoderStrategy.SOFTWARE_FALLBACK && isDecoderFailure && selectedQualityId != "auto") {
+                    resumePositionMs = exoPlayer.currentPosition.coerceAtLeast(currentPositionMs).coerceAtLeast(0L)
                     selectedQualityId = "auto"
                     playbackError = null
                     isBuffering = true
@@ -574,10 +542,20 @@ fun MxVideoPlayerDialog(
         }
 
         exoPlayer.addListener(listener)
+        exoPlayer.addAnalyticsListener(eventLogger)
+        exoPlayer.addAnalyticsListener(diagnosticsCollector)
 
         try {
             val resolvedUri = resolvePlayableUri(item)
-            exoPlayer.setMediaItem(Media3MediaItem.fromUri(resolvedUri))
+            val mediaItemBuilder = Media3MediaItem.Builder().setUri(resolvedUri)
+            externalSubtitleUri?.let { subUri ->
+                val subConfig = Media3MediaItem.SubtitleConfiguration.Builder(subUri)
+                    .setMimeType(detectSubtitleMimeType(subUri, externalSubtitleName))
+                    .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                    .build()
+                mediaItemBuilder.setSubtitleConfigurations(listOf(subConfig))
+            }
+            exoPlayer.setMediaItem(mediaItemBuilder.build())
             if (resumePositionMs > 0L) {
                 exoPlayer.seekTo(resumePositionMs)
             }
@@ -591,33 +569,58 @@ fun MxVideoPlayerDialog(
 
         onDispose {
             exoPlayer.removeListener(listener)
+            exoPlayer.removeAnalyticsListener(eventLogger)
+            exoPlayer.removeAnalyticsListener(diagnosticsCollector)
+            exoPlayer.clearVideoSurface()
             exoPlayer.release()
         }
     }
 
-    // Auto-hide controls timer (paused while quality or speed picker is open)
-    LaunchedEffect(controlsVisible, isPlaying, isScreenLocked, showQualityDialog, showSpeedMenu) {
-        if (controlsVisible && isPlaying && !isScreenLocked && !showQualityDialog && !showSpeedMenu) {
-            delay(3500)
-            controlsVisible = false
-        }
-    }
-
-    // Watchdog: if audio plays cleanly on a high-quality video but no video frame renders (black screen),
-    // automatically switch to software MediaCodec decoders so both audio and video render visibly.
-    LaunchedEffect(exoPlayer, isPlayerPrepared, isPlaying, hasRenderedFirstFrame, hasVideoTracks, useSoftwareDecoder) {
-        if (isPlayerPrepared && isPlaying && hasVideoTracks && !hasRenderedFirstFrame && !useSoftwareDecoder) {
+    // Watchdog for black-screen hardware decoders / incompatible surface:
+    // Stage 1: If SurfaceView + HW decoder produces audio for 1.5s without rendering a frame, switch to TextureView or SW fallback
+    LaunchedEffect(
+        exoPlayer,
+        isPlayerPrepared,
+        isPlaying,
+        hasRenderedFirstFrame,
+        hasVideoTracks,
+        decoderStrategy,
+        surfaceMode,
+        autoSurfaceRetryAttempted
+    ) {
+        if (isPlayerPrepared && isPlaying && hasVideoTracks && !hasRenderedFirstFrame) {
             var activePlayMs = 0L
             while (!hasRenderedFirstFrame && exoPlayer.isPlaying && activePlayMs < 1500L) {
                 delay(250)
                 activePlayMs += 250L
             }
-            if (!hasRenderedFirstFrame && hasVideoTracks && !useSoftwareDecoder && exoPlayer.isPlaying) {
-                resumePositionMs = exoPlayer.currentPosition.coerceAtLeast(currentPositionMs).coerceAtLeast(0L)
-                playbackError = null
-                isBuffering = true
-                useSoftwareDecoder = true
+            if (!hasRenderedFirstFrame && hasVideoTracks && exoPlayer.isPlaying) {
+                if (surfaceMode == RenderSurfaceMode.SURFACE_VIEW && !autoSurfaceRetryAttempted) {
+                    autoSurfaceRetryAttempted = true
+                    surfaceMode = RenderSurfaceMode.TEXTURE_VIEW
+                } else if (decoderStrategy == DecoderStrategy.HARDWARE_FIRST) {
+                    resumePositionMs = exoPlayer.currentPosition.coerceAtLeast(currentPositionMs).coerceAtLeast(0L)
+                    playbackError = null
+                    isBuffering = true
+                    decoderStrategy = DecoderStrategy.SOFTWARE_FALLBACK
+                }
             }
+        }
+    }
+
+    // Auto-hide controls timer
+    LaunchedEffect(
+        controlsVisible,
+        isPlaying,
+        isScreenLocked,
+        showQualityDialog,
+        showAudioSubDialog,
+        showDiagnosticsDialog,
+        showSpeedMenu
+    ) {
+        if (controlsVisible && isPlaying && !isScreenLocked && !showQualityDialog && !showAudioSubDialog && !showDiagnosticsDialog && !showSpeedMenu) {
+            delay(3500)
+            controlsVisible = false
         }
     }
 
@@ -641,39 +644,44 @@ fun MxVideoPlayerDialog(
         }
     }
 
-    // Keep screen on while playing video
-    DisposableEffect(Unit) {
-        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    // Keep screen on & enable immersive system bars while full-screen player is active
+    DisposableEffect(activity, view) {
+        val window = activity?.window
+        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        val insetsController = window?.let { WindowCompat.getInsetsController(it, view) }
+        insetsController?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        insetsController?.hide(WindowInsetsCompat.Type.systemBars())
+
         onDispose {
-            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            insetsController?.show(WindowInsetsCompat.Type.systemBars())
         }
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            dismissOnBackPress = true,
-            dismissOnClickOutside = false
-        )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
     ) {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = Color.Black
-        ) {
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                val containerWidth = constraints.maxWidth.toFloat()
-                val containerHeight = constraints.maxHeight.toFloat()
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val containerWidth = constraints.maxWidth.toFloat()
+            val containerHeight = constraints.maxHeight.toFloat()
 
-                // Media3 Hardware-Accelerated PlayerView (supports 1080p, 2K, 4K, HEVC, MKV, rotated camera videos)
+            // Re-create PlayerView cleanly when surfaceMode switches between SurfaceView and TextureView
+            key(surfaceMode) {
                 AndroidView(
                     factory = { ctx ->
-                        (LayoutInflater.from(ctx).inflate(R.layout.mx_player_view, null, false) as PlayerView).apply {
+                        val layoutId = if (surfaceMode == RenderSurfaceMode.SURFACE_VIEW) {
+                            R.layout.mx_player_surface_view
+                        } else {
+                            R.layout.mx_player_view
+                        }
+                        (LayoutInflater.from(ctx).inflate(layoutId, null, false) as PlayerView).apply {
                             player = exoPlayer
                             useController = false
                             keepScreenOn = true
                             setShutterBackgroundColor(android.graphics.Color.BLACK)
-                            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                            if (Build.VERSION.SDK_INT >= 34) {
                                 setEnableComposeSurfaceSyncWorkaround(true)
                             }
                         }
@@ -689,432 +697,321 @@ fun MxVideoPlayerDialog(
                             AspectRatioMode.ORIGINAL -> AspectRatioFrameLayout.RESIZE_MODE_FIT
                         }
                     },
+                    onRelease = { playerView ->
+                        playerView.player = null
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
+            }
 
-                // Buffering Spinner
-                if (isBuffering && playbackError == null) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        CircularProgressIndicator(
-                            color = NeonCyan,
-                            strokeWidth = 3.dp,
-                            modifier = Modifier.size(52.dp)
+            // Buffering Spinner
+            if (isBuffering && playbackError == null) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                    CircularProgressIndicator(
+                        color = NeonCyan,
+                        strokeWidth = 3.dp,
+                        modifier = Modifier.size(52.dp)
+                    )
+                }
+            }
+
+            // Error Overlay
+            if (playbackError != null) {
+                PlaybackErrorOverlay(
+                    playbackError = playbackError ?: "Error",
+                    fileName = item.name,
+                    isBangla = isBangla,
+                    onRetry = {
+                        resumePositionMs = currentPositionMs.coerceAtLeast(0L)
+                        reloadTrigger++
+                    },
+                    onOpenDiagnostics = { showDiagnosticsDialog = true },
+                    onDismiss = onDismiss
+                )
+            }
+
+            // Gesture Detection Layer (only active when no blocking error overlay is shown)
+            if (playbackError == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(isScreenLocked, isPlayerPrepared) {
+                            if (isScreenLocked) {
+                                detectTapGestures { controlsVisible = !controlsVisible }
+                            } else {
+                                detectTapGestures(
+                                    onTap = { controlsVisible = !controlsVisible },
+                                    onDoubleTap = { offset ->
+                                        if (!isPlayerPrepared) return@detectTapGestures
+                                        val isRightHalf = offset.x > (containerWidth / 2f)
+                                        if (isRightHalf) {
+                                            safeSeekTo(currentPositionMs + 10000L)
+                                            showForwardFeedback = true
+                                            scope.launch {
+                                                delay(650)
+                                                showForwardFeedback = false
+                                            }
+                                        } else {
+                                            safeSeekTo(currentPositionMs - 10000L)
+                                            showRewindFeedback = true
+                                            scope.launch {
+                                                delay(650)
+                                                showRewindFeedback = false
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                        .pointerInput(isScreenLocked, isPlayerPrepared) {
+                            if (!isScreenLocked) {
+                                var dragMode = 0
+                                var totalDragX = 0f
+                                var totalDragY = 0f
+                                var initialSeekPos = 0L
+
+                                detectDragGestures(
+                                    onDragStart = {
+                                        totalDragX = 0f
+                                        totalDragY = 0f
+                                        dragMode = 0
+                                        initialSeekPos = currentPositionMs
+                                    },
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        totalDragX += dragAmount.x
+                                        totalDragY += dragAmount.y
+
+                                        if (dragMode == 0) {
+                                            if (abs(totalDragX) > 30f && abs(totalDragX) > abs(totalDragY)) {
+                                                dragMode = 3
+                                            } else if (abs(totalDragY) > 30f) {
+                                                dragMode = if (change.position.x > containerWidth / 2f) 1 else 2
+                                            }
+                                        }
+
+                                        when (dragMode) {
+                                            1 -> {
+                                                val step = (-dragAmount.y / containerHeight) * maxVolume
+                                                val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                                                val newVol = (currentVol + step).toInt().coerceIn(0, maxVolume)
+                                                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
+                                                currentVolumePercent = (newVol * 100) / maxVolume
+                                                showVolumeOverlay = true
+                                            }
+                                            2 -> {
+                                                val window = activity?.window
+                                                val lp = window?.attributes
+                                                val cur = if (lp?.screenBrightness != null && lp.screenBrightness >= 0f) lp.screenBrightness else 0.5f
+                                                val delta = -dragAmount.y / (containerHeight * 0.7f)
+                                                val newBrightness = (cur + delta).coerceIn(0.05f, 1.0f)
+                                                lp?.screenBrightness = newBrightness
+                                                window?.attributes = lp
+                                                currentBrightnessPercent = (newBrightness * 100).toInt()
+                                                showBrightnessOverlay = true
+                                            }
+                                            3 -> {
+                                                if (isPlayerPrepared) {
+                                                    val duration = totalDurationMs.coerceAtLeast(1000L)
+                                                    val seekDeltaMs = ((totalDragX / containerWidth) * 90000L).toLong()
+                                                    val target = (initialSeekPos + seekDeltaMs).coerceIn(0L, duration)
+                                                    seekTargetMs = target
+                                                    seekDeltaSeconds = ((target - initialSeekPos) / 1000).toInt()
+                                                    showSeekOverlay = true
+                                                }
+                                            }
+                                        }
+                                    },
+                                    onDragEnd = {
+                                        if (dragMode == 3 && showSeekOverlay) {
+                                            safeSeekTo(seekTargetMs)
+                                        }
+                                        showVolumeOverlay = false
+                                        showBrightnessOverlay = false
+                                        showSeekOverlay = false
+                                        dragMode = 0
+                                    },
+                                    onDragCancel = {
+                                        showVolumeOverlay = false
+                                        showBrightnessOverlay = false
+                                        showSeekOverlay = false
+                                        dragMode = 0
+                                    }
+                                )
+                            }
+                        }
+                )
+            }
+
+            // Gesture HUD Overlays
+            AnimatedVisibility(visible = showVolumeOverlay, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.Center)) {
+                Surface(shape = RoundedCornerShape(16.dp), color = Color.Black.copy(alpha = 0.8f), border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(20.dp)) {
+                        Icon(
+                            imageVector = when {
+                                currentVolumePercent == 0 -> Icons.AutoMirrored.Filled.VolumeMute
+                                currentVolumePercent < 50 -> Icons.AutoMirrored.Filled.VolumeDown
+                                else -> Icons.AutoMirrored.Filled.VolumeUp
+                            },
+                            contentDescription = null,
+                            tint = NeonCyan,
+                            modifier = Modifier.size(44.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(text = "Volume: $currentVolumePercent%", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    }
+                }
+            }
+
+            AnimatedVisibility(visible = showBrightnessOverlay, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.Center)) {
+                Surface(shape = RoundedCornerShape(16.dp), color = Color.Black.copy(alpha = 0.8f), border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(20.dp)) {
+                        Icon(imageVector = Icons.Default.BrightnessHigh, contentDescription = null, tint = GoldenVault, modifier = Modifier.size(44.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(text = "Brightness: $currentBrightnessPercent%", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    }
+                }
+            }
+
+            AnimatedVisibility(visible = showSeekOverlay, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.Center)) {
+                Surface(shape = RoundedCornerShape(16.dp), color = Color.Black.copy(alpha = 0.85f), border = BorderStroke(1.5.dp, ElectricIndigo)) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp)) {
+                        val sign = if (seekDeltaSeconds >= 0) "+${seekDeltaSeconds}s" else "${seekDeltaSeconds}s"
+                        Text(text = sign, color = ElectricIndigo, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = String.format(
+                                Locale.US,
+                                "%02d:%02d / %02d:%02d",
+                                (seekTargetMs / 1000) / 60,
+                                (seekTargetMs / 1000) % 60,
+                                (totalDurationMs / 1000) / 60,
+                                (totalDurationMs / 1000) % 60
+                            ),
+                            color = Color.White,
+                            fontSize = 14.sp
                         )
                     }
                 }
+            }
 
-                // Error Card overlay if video cannot be played
-                if (playbackError != null) {
-                    Box(
-                        contentAlignment = Alignment.Center,
+            if (showRewindFeedback) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .padding(start = 32.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.25f))
+                        .padding(16.dp)
+                ) {
+                    Icon(Icons.Default.Replay10, contentDescription = "-10s", tint = Color.White, modifier = Modifier.size(36.dp))
+                }
+            }
+
+            if (showForwardFeedback) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 32.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.25f))
+                        .padding(16.dp)
+                ) {
+                    Icon(Icons.Default.Forward10, contentDescription = "+10s", tint = Color.White, modifier = Modifier.size(36.dp))
+                }
+            }
+
+            // Screen Lock Floating Button
+            if (isScreenLocked) {
+                IconButton(
+                    onClick = { isScreenLocked = false },
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .statusBarsPadding()
+                        .padding(16.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .testTag("unlock_screen_btn")
+                ) {
+                    Icon(Icons.Default.Lock, contentDescription = "Unlock Controls", tint = GoldenVault, modifier = Modifier.size(24.dp))
+                }
+            }
+
+            // On-screen Controls
+            AnimatedVisibility(
+                visible = controlsVisible && !isScreenLocked && playbackError == null,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // Top Control Bar
+                    Row(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .padding(24.dp)
+                            .fillMaxWidth()
+                            .align(Alignment.TopCenter)
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent)
+                                )
+                            )
+                            .statusBarsPadding()
+                            .padding(horizontal = 6.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Card(
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.padding(24.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ErrorOutline,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(48.dp)
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
+                        IconButton(onClick = onDismiss, modifier = Modifier.testTag("mx_back_btn")) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                        }
+
+                        Column(modifier = Modifier.weight(1f).padding(horizontal = 4.dp)) {
+                            Text(
+                                text = item.name,
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                val shortSide = minOf(videoWidth, videoHeight)
+                                val longSide = maxOf(videoWidth, videoHeight)
+                                val qualityBadge = when {
+                                    shortSide >= 2160 || longSide >= 3840 -> "4K UHD"
+                                    shortSide >= 1440 || longSide >= 2560 -> "2K QHD"
+                                    shortSide >= 1080 || longSide >= 1920 -> "1080p FHD"
+                                    shortSide >= 720 -> "720p HD"
+                                    else -> "SD"
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(NeonCyan.copy(alpha = 0.25f))
+                                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                                ) {
+                                    Text(text = qualityBadge, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = NeonCyan)
+                                }
+
+                                val modeTag = buildString {
+                                    append(" • ${videoWidth}×${videoHeight}")
+                                    append(if (surfaceMode == RenderSurfaceMode.SURFACE_VIEW) " • SV" else " • TV")
+                                    if (decoderStrategy == DecoderStrategy.SOFTWARE_FALLBACK) append(" SW")
+                                }
                                 Text(
-                                    text = playbackError ?: "Error",
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp
-                                )
-                                Text(
-                                    text = item.name,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 12.sp,
+                                    text = modeTag,
+                                    color = Color.White.copy(alpha = 0.65f),
+                                    fontSize = 10.sp,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
+                                    modifier = Modifier.padding(start = 4.dp)
                                 )
-                                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    OutlinedButton(onClick = onDismiss) {
-                                        Text(if (isBangla) "ফিরে যান" else "Close")
-                                    }
-                                    Button(
-                                        onClick = {
-                                            resumePositionMs = currentPositionMs.coerceAtLeast(0L)
-                                            reloadTrigger++
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Refresh,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(if (isBangla) "আবার চেষ্টা" else "Retry")
-                                    }
-                                }
                             }
                         }
-                    }
-                }
 
-                // TOUCH & MX GESTURE DETECTION LAYER (only active when there is no blocking error overlay)
-                if (playbackError == null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(isScreenLocked, isPlayerPrepared) {
-                                if (isScreenLocked) {
-                                    detectTapGestures {
-                                        controlsVisible = !controlsVisible
-                                    }
-                                } else {
-                                    detectTapGestures(
-                                        onTap = {
-                                            controlsVisible = !controlsVisible
-                                        },
-                                        onDoubleTap = { offset ->
-                                            if (!isPlayerPrepared) return@detectTapGestures
-                                            val isRightHalf = offset.x > (containerWidth / 2f)
-                                            if (isRightHalf) {
-                                                safeSeekTo(currentPositionMs + 10000L)
-                                                showForwardFeedback = true
-                                                scope.launch {
-                                                    delay(650)
-                                                    showForwardFeedback = false
-                                                }
-                                            } else {
-                                                safeSeekTo(currentPositionMs - 10000L)
-                                                showRewindFeedback = true
-                                                scope.launch {
-                                                    delay(650)
-                                                    showRewindFeedback = false
-                                                }
-                                            }
-                                        }
-                                    )
-                                }
-                            }
-                            .pointerInput(isScreenLocked, isPlayerPrepared) {
-                                if (!isScreenLocked) {
-                                    var dragMode = 0 // 0 = none, 1 = volume (right vertical), 2 = brightness (left vertical), 3 = seek (horizontal)
-                                    var totalDragX = 0f
-                                    var totalDragY = 0f
-                                    var initialSeekPos = 0L
-
-                                    detectDragGestures(
-                                        onDragStart = {
-                                            totalDragX = 0f
-                                            totalDragY = 0f
-                                            dragMode = 0
-                                            initialSeekPos = currentPositionMs
-                                        },
-                                        onDrag = { change, dragAmount ->
-                                            change.consume()
-                                            totalDragX += dragAmount.x
-                                            totalDragY += dragAmount.y
-
-                                            if (dragMode == 0) {
-                                                if (abs(totalDragX) > 30f && abs(totalDragX) > abs(totalDragY)) {
-                                                    dragMode = 3 // Horizontal Seek
-                                                } else if (abs(totalDragY) > 30f) {
-                                                    dragMode = if (change.position.x > containerWidth / 2f) 1 else 2
-                                                }
-                                            }
-
-                                            when (dragMode) {
-                                                1 -> {
-                                                    // Volume Control (Right side)
-                                                    val step = (-dragAmount.y / containerHeight) * maxVolume
-                                                    val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-                                                    val newVol = (currentVol + step).toInt().coerceIn(0, maxVolume)
-                                                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
-                                                    currentVolumePercent = (newVol * 100) / maxVolume
-                                                    showVolumeOverlay = true
-                                                }
-                                                2 -> {
-                                                    // Brightness Control (Left side)
-                                                    val window = activity?.window
-                                                    val lp = window?.attributes
-                                                    val cur = if (lp?.screenBrightness != null && lp.screenBrightness >= 0f) lp.screenBrightness else 0.5f
-                                                    val delta = -dragAmount.y / (containerHeight * 0.7f)
-                                                    val newBrightness = (cur + delta).coerceIn(0.05f, 1.0f)
-                                                    lp?.screenBrightness = newBrightness
-                                                    window?.attributes = lp
-                                                    currentBrightnessPercent = (newBrightness * 100).toInt()
-                                                    showBrightnessOverlay = true
-                                                }
-                                                3 -> {
-                                                    // Seek Control (Horizontal)
-                                                    if (isPlayerPrepared) {
-                                                        val duration = totalDurationMs.coerceAtLeast(1000L)
-                                                        val seekDeltaMs = ((totalDragX / containerWidth) * 90000L).toLong()
-                                                        val target = (initialSeekPos + seekDeltaMs).coerceIn(0L, duration)
-                                                        seekTargetMs = target
-                                                        seekDeltaSeconds = ((target - initialSeekPos) / 1000).toInt()
-                                                        showSeekOverlay = true
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        onDragEnd = {
-                                            if (dragMode == 3 && showSeekOverlay) {
-                                                safeSeekTo(seekTargetMs)
-                                            }
-                                            showVolumeOverlay = false
-                                            showBrightnessOverlay = false
-                                            showSeekOverlay = false
-                                            dragMode = 0
-                                        },
-                                        onDragCancel = {
-                                            showVolumeOverlay = false
-                                            showBrightnessOverlay = false
-                                            showSeekOverlay = false
-                                            dragMode = 0
-                                        }
-                                    )
-                                }
-                            }
-                    )
-                }
-
-                // GESTURE HUD OVERLAYS (VOLUME, BRIGHTNESS, SEEK)
-                // 1. Volume HUD
-                AnimatedVisibility(
-                    visible = showVolumeOverlay,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                    modifier = Modifier.align(Alignment.Center)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = Color.Black.copy(alpha = 0.8f),
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(20.dp)
-                        ) {
-                            Icon(
-                                imageVector = when {
-                                    currentVolumePercent == 0 -> Icons.AutoMirrored.Filled.VolumeMute
-                                    currentVolumePercent < 50 -> Icons.AutoMirrored.Filled.VolumeDown
-                                    else -> Icons.AutoMirrored.Filled.VolumeUp
-                                },
-                                contentDescription = null,
-                                tint = NeonCyan,
-                                modifier = Modifier.size(44.dp)
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "Volume: $currentVolumePercent%",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp
-                            )
-                        }
-                    }
-                }
-
-                // 2. Brightness HUD
-                AnimatedVisibility(
-                    visible = showBrightnessOverlay,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                    modifier = Modifier.align(Alignment.Center)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = Color.Black.copy(alpha = 0.8f),
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(20.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.BrightnessHigh,
-                                contentDescription = null,
-                                tint = GoldenVault,
-                                modifier = Modifier.size(44.dp)
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "Brightness: $currentBrightnessPercent%",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp
-                            )
-                        }
-                    }
-                }
-
-                // 3. Horizontal Seek HUD
-                AnimatedVisibility(
-                    visible = showSeekOverlay,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                    modifier = Modifier.align(Alignment.Center)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = Color.Black.copy(alpha = 0.85f),
-                        border = BorderStroke(1.5.dp, ElectricIndigo)
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp)
-                        ) {
-                            val sign = if (seekDeltaSeconds >= 0) "+${seekDeltaSeconds}s" else "${seekDeltaSeconds}s"
-                            Text(
-                                text = sign,
-                                color = ElectricIndigo,
-                                fontSize = 24.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            val targetMins = (seekTargetMs / 1000) / 60
-                            val targetSecs = (seekTargetMs / 1000) % 60
-                            val totalMins = (totalDurationMs / 1000) / 60
-                            val totalSecs = (totalDurationMs / 1000) % 60
-                            Text(
-                                text = String.format(Locale.US, "%02d:%02d / %02d:%02d", targetMins, targetSecs, totalMins, totalSecs),
-                                color = Color.White,
-                                fontSize = 14.sp
-                            )
-                        }
-                    }
-                }
-
-                // 4. Double Tap Feedback (Left Rewind 10s / Right Fast-Forward 10s)
-                if (showRewindFeedback) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.CenterStart)
-                            .padding(start = 32.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.25f))
-                            .padding(16.dp)
-                    ) {
-                        Icon(Icons.Default.Replay10, contentDescription = "-10s", tint = Color.White, modifier = Modifier.size(36.dp))
-                    }
-                }
-
-                if (showForwardFeedback) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .padding(end = 32.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.25f))
-                            .padding(16.dp)
-                    ) {
-                        Icon(Icons.Default.Forward10, contentDescription = "+10s", tint = Color.White, modifier = Modifier.size(36.dp))
-                    }
-                }
-
-                // SCREEN LOCK FLOATING ICON (When Locked)
-                if (isScreenLocked) {
-                    IconButton(
-                        onClick = { isScreenLocked = false },
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .statusBarsPadding()
-                            .padding(16.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.6f))
-                            .testTag("unlock_screen_btn")
-                    ) {
-                        Icon(Icons.Default.Lock, contentDescription = "Unlock Controls", tint = GoldenVault, modifier = Modifier.size(24.dp))
-                    }
-                }
-
-                // ON-SCREEN MX CONTROLS (TOP & BOTTOM BARS)
-                AnimatedVisibility(
-                    visible = controlsVisible && !isScreenLocked && playbackError == null,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        // Top Bar
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .align(Alignment.TopCenter)
-                                .background(
-                                    Brush.verticalGradient(
-                                        colors = listOf(Color.Black.copy(alpha = 0.8f), Color.Transparent)
-                                    )
-                                )
-                                .statusBarsPadding()
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.horizontalScroll(rememberScrollState())
                         ) {
-                            IconButton(onClick = onDismiss, modifier = Modifier.testTag("mx_back_btn")) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
-                            }
-
-                            Column(modifier = Modifier.weight(1f).padding(horizontal = 6.dp)) {
-                                Text(
-                                    text = item.name,
-                                    color = Color.White,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    val shortSide = minOf(videoWidth, videoHeight)
-                                    val longSide = maxOf(videoWidth, videoHeight)
-                                    val qualityBadge = when {
-                                        shortSide >= 2160 || longSide >= 3840 -> "4K UHD"
-                                        shortSide >= 1440 || longSide >= 2560 -> "2K QHD"
-                                        shortSide >= 1080 || longSide >= 1920 -> "1080p FHD"
-                                        shortSide >= 720 -> "720p HD"
-                                        else -> "SD"
-                                    }
-
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(NeonCyan.copy(alpha = 0.25f))
-                                            .padding(horizontal = 5.dp, vertical = 2.dp)
-                                    ) {
-                                        Text(
-                                            text = qualityBadge,
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = NeonCyan
-                                        )
-                                    }
-
-                                    Text(
-                                        text = if (useSoftwareDecoder) {
-                                            " • ${videoWidth}×${videoHeight} • Media3 SW"
-                                        } else {
-                                            " • ${videoWidth}×${videoHeight} • Media3"
-                                        },
-                                        color = Color.White.copy(alpha = 0.65f),
-                                        fontSize = 11.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.padding(start = 4.dp)
-                                    )
-                                }
-                            }
-
-                            // Quality Selector Button
                             val selectedQualityOption = qualityOptions.firstOrNull { it.id == selectedQualityId }
                             val qualityBtnLabel = if (selectedQualityOption == null || selectedQualityOption.id == "auto") {
                                 val (_, activeShort) = formatQualityLabels(videoWidth, videoHeight)
@@ -1122,16 +1019,14 @@ fun MxVideoPlayerDialog(
                             } else {
                                 selectedQualityOption.shortLabel
                             }
+
                             Surface(
                                 onClick = { showQualityDialog = true },
                                 shape = RoundedCornerShape(16.dp),
                                 color = if (selectedQualityId != "auto") NeonCyan.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.14f),
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (selectedQualityId != "auto") NeonCyan else Color.White.copy(alpha = 0.3f)
-                                ),
+                                border = BorderStroke(1.dp, if (selectedQualityId != "auto") NeonCyan else Color.White.copy(alpha = 0.3f)),
                                 modifier = Modifier
-                                    .padding(end = 4.dp)
+                                    .padding(end = 2.dp)
                                     .testTag("mx_quality_btn")
                             ) {
                                 Row(
@@ -1155,7 +1050,20 @@ fun MxVideoPlayerDialog(
                                 }
                             }
 
-                            // Aspect Ratio Mode Button
+                            IconButton(
+                                onClick = { showAudioSubDialog = true },
+                                modifier = Modifier.testTag("mx_audio_sub_btn")
+                            ) {
+                                Icon(Icons.Default.Subtitles, contentDescription = "Audio & Subtitles", tint = Color.White)
+                            }
+
+                            IconButton(
+                                onClick = { showDiagnosticsDialog = true },
+                                modifier = Modifier.testTag("mx_diagnostics_btn")
+                            ) {
+                                Icon(Icons.Default.Info, contentDescription = "Playback Diagnostics", tint = Color.White)
+                            }
+
                             IconButton(
                                 onClick = {
                                     currentAspectRatioMode = when (currentAspectRatioMode) {
@@ -1170,26 +1078,14 @@ fun MxVideoPlayerDialog(
                                 Icon(Icons.Default.AspectRatio, contentDescription = "Aspect Ratio", tint = Color.White)
                             }
 
-                            // Speed Selector
                             Box {
                                 IconButton(
                                     onClick = { showSpeedMenu = true },
                                     modifier = Modifier.testTag("mx_speed_btn")
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = "${playbackSpeed}x",
-                                            color = GoldenVault,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
+                                    Text(text = "${playbackSpeed}x", color = GoldenVault, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
-
-                                DropdownMenu(
-                                    expanded = showSpeedMenu,
-                                    onDismissRequest = { showSpeedMenu = false }
-                                ) {
+                                DropdownMenu(expanded = showSpeedMenu, onDismissRequest = { showSpeedMenu = false }) {
                                     listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { speed ->
                                         DropdownMenuItem(
                                             text = { Text("${speed}x ${if (speed == 1.0f) "(Normal)" else ""}") },
@@ -1203,7 +1099,6 @@ fun MxVideoPlayerDialog(
                                 }
                             }
 
-                            // Touch Lock Screen Button
                             IconButton(
                                 onClick = { isScreenLocked = true },
                                 modifier = Modifier.testTag("mx_lock_screen_btn")
@@ -1211,325 +1106,175 @@ fun MxVideoPlayerDialog(
                                 Icon(Icons.Default.LockOpen, contentDescription = "Lock Screen", tint = Color.White)
                             }
                         }
-
-                        // Center Play / Pause Big Button
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .size(72.dp)
-                                .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.65f))
-                                .pointerInput(isPlayerPrepared) {
-                                    detectTapGestures {
-                                        safePlayPause()
-                                    }
-                                }
-                                .testTag("mx_center_play_pause_btn")
-                        ) {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlaying) "Pause" else "Play",
-                                tint = Color.White,
-                                modifier = Modifier.size(44.dp)
-                            )
-                        }
-
-                        // Bottom Control Bar
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .align(Alignment.BottomCenter)
-                                .background(
-                                    Brush.verticalGradient(
-                                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
-                                    )
-                                )
-                                .navigationBarsPadding()
-                                .padding(horizontal = 16.dp, vertical = 10.dp)
-                        ) {
-                            // Time Bar & Aspect Ratio Indicator
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                val curSecs = currentPositionMs / 1000
-                                val curMins = curSecs / 60
-                                val curRemainder = curSecs % 60
-
-                                val totSecs = totalDurationMs / 1000
-                                val totMins = totSecs / 60
-                                val totRemainder = totSecs % 60
-
-                                Text(
-                                    text = String.format(Locale.US, "%d:%02d", curMins, curRemainder),
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-
-                                Text(
-                                    text = when (currentAspectRatioMode) {
-                                        AspectRatioMode.FIT -> if (isBangla) "ফিট স্ক্রিন" else "Fit Screen"
-                                        AspectRatioMode.CROP_FILL -> if (isBangla) "ফুল স্ক্রিন (ক্রপ)" else "Crop to Fill"
-                                        AspectRatioMode.STRETCH -> if (isBangla) "স্ট্রেচ" else "Stretch"
-                                        AspectRatioMode.ORIGINAL -> if (isBangla) "আসল অনুপাত" else "100% Original"
-                                    },
-                                    color = GoldenVault,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-
-                                Text(
-                                    text = String.format(Locale.US, "%d:%02d", totMins, totRemainder),
-                                    color = Color.White.copy(alpha = 0.7f),
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-
-                            // Scrub Slider
-                            val sliderPosition = if (totalDurationMs > 0) {
-                                (currentPositionMs.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f)
-                            } else 0f
-
-                            Slider(
-                                value = sliderPosition,
-                                onValueChange = { fraction ->
-                                    val targetMs = (fraction * totalDurationMs).toLong()
-                                    currentPositionMs = targetMs
-                                    safeSeekTo(targetMs)
-                                },
-                                colors = SliderDefaults.colors(
-                                    thumbColor = NeonCyan,
-                                    activeTrackColor = NeonCyan,
-                                    inactiveTrackColor = Color.White.copy(alpha = 0.3f)
-                                ),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("mx_progress_slider")
-                            )
-
-                            // Quick Controls Row (Rewind 10s, Play/Pause, Forward 10s)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 2.dp),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                IconButton(
-                                    onClick = {
-                                        safeSeekTo(currentPositionMs - 10000L)
-                                    }
-                                ) {
-                                    Icon(Icons.Default.Replay10, contentDescription = "Rewind 10s", tint = Color.White)
-                                }
-
-                                Spacer(modifier = Modifier.width(16.dp))
-
-                                IconButton(
-                                    onClick = {
-                                        safePlayPause()
-                                    },
-                                    modifier = Modifier
-                                        .size(44.dp)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.primary)
-                                ) {
-                                    Icon(
-                                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                        contentDescription = "Play/Pause",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(28.dp)
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.width(16.dp))
-
-                                IconButton(
-                                    onClick = {
-                                        safeSeekTo(currentPositionMs + 10000L)
-                                    }
-                                ) {
-                                    Icon(Icons.Default.Forward10, contentDescription = "Forward 10s", tint = Color.White)
-                                }
-                            }
-                        }
                     }
-                }
 
-                // MANUAL VIDEO QUALITY SELECTION MODAL OVERLAY
-                if (showQualityDialog) {
+                    // Center Play / Pause Button
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
-                            .fillMaxSize()
+                            .align(Alignment.Center)
+                            .size(72.dp)
+                            .clip(CircleShape)
                             .background(Color.Black.copy(alpha = 0.65f))
-                            .clickable { showQualityDialog = false }
-                            .padding(24.dp)
-                            .testTag("mx_quality_dialog")
+                            .pointerInput(isPlayerPrepared) {
+                                detectTapGestures { safePlayPause() }
+                            }
+                            .testTag("mx_center_play_pause_btn")
                     ) {
-                        Card(
-                            shape = RoundedCornerShape(20.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF161922)),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
+                        Icon(
+                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause" else "Play",
+                            tint = Color.White,
+                            modifier = Modifier.size(44.dp)
+                        )
+                    }
+
+                    // Bottom Control Bar
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.BottomCenter)
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
+                                )
+                            )
+                            .navigationBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = String.format(Locale.US, "%d:%02d", (currentPositionMs / 1000) / 60, (currentPositionMs / 1000) % 60),
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+
+                            Text(
+                                text = when (currentAspectRatioMode) {
+                                    AspectRatioMode.FIT -> if (isBangla) "ফিট স্ক্রিন" else "Fit Screen"
+                                    AspectRatioMode.CROP_FILL -> if (isBangla) "ফুল স্ক্রিন (ক্রপ)" else "Crop to Fill"
+                                    AspectRatioMode.STRETCH -> if (isBangla) "স্ট্রেচ" else "Stretch"
+                                    AspectRatioMode.ORIGINAL -> if (isBangla) "আসল অনুপাত" else "100% Original"
+                                },
+                                color = GoldenVault,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+
+                            Text(
+                                text = String.format(Locale.US, "%d:%02d", (totalDurationMs / 1000) / 60, (totalDurationMs / 1000) % 60),
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+
+                        val sliderPosition = if (totalDurationMs > 0) {
+                            (currentPositionMs.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f)
+                        } else 0f
+
+                        Slider(
+                            value = sliderPosition,
+                            onValueChange = { fraction ->
+                                val targetMs = (fraction * totalDurationMs).toLong()
+                                currentPositionMs = targetMs
+                                safeSeekTo(targetMs)
+                            },
+                            colors = SliderDefaults.colors(
+                                thumbColor = NeonCyan,
+                                activeTrackColor = NeonCyan,
+                                inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                            ),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .widthIn(max = 420.dp)
-                                .clickable(enabled = false) {}
+                                .testTag("mx_progress_slider")
+                        )
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 2.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.padding(20.dp)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.HighQuality,
-                                            contentDescription = null,
-                                            tint = NeonCyan,
-                                            modifier = Modifier.size(22.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = if (isBangla) "ভিডিও কোয়ালিটি নির্বাচন" else "Video Quality",
-                                            color = Color.White,
-                                            fontSize = 17.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                    Text(
-                                        text = "${videoWidth}×${videoHeight}",
-                                        color = GoldenVault,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.height(6.dp))
-                                val videoTrackCount = qualityOptions.count { it.trackGroup != null }
-                                Text(
-                                    text = if (videoTrackCount <= 1) {
-                                        if (isBangla) {
-                                            "এই ভিডিওতে ১টি মূল রেজোলিউশন ট্র্যাক রয়েছে"
-                                        } else {
-                                            "This media source has 1 native resolution track"
-                                        }
-                                    } else {
-                                        if (isBangla) {
-                                            "মিডিয়া সোর্সে উপলব্ধ রেজোলিউশন ট্র্যাক থেকে বেছে নিন"
-                                        } else {
-                                            "Switch between available resolution tracks from the media source"
-                                        }
-                                    },
-                                    color = Color.White.copy(alpha = 0.65f),
-                                    fontSize = 12.sp
+                            IconButton(onClick = { safeSeekTo(currentPositionMs - 10000L) }) {
+                                Icon(Icons.Default.Replay10, contentDescription = "Rewind 10s", tint = Color.White)
+                            }
+                            Spacer(modifier = Modifier.width(16.dp))
+                            IconButton(
+                                onClick = { safePlayPause() },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary)
+                            ) {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = "Play/Pause",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(28.dp)
                                 )
-
-                                Spacer(modifier = Modifier.height(12.dp))
-                                HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                Column(
-                                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(max = 280.dp)
-                                        .verticalScroll(rememberScrollState())
-                                ) {
-                                    qualityOptions.forEach { option ->
-                                        val isSelected = option.id == selectedQualityId
-                                        val isActiveAuto = option.id == "auto" && selectedQualityId == "auto"
-                                        val detailText = if (option.id == "auto") {
-                                            val (activeLabel, _) = formatQualityLabels(videoWidth, videoHeight)
-                                            if (isBangla) "বর্তমান: $activeLabel (${videoWidth}×${videoHeight})" else "Active: $activeLabel (${videoWidth}×${videoHeight})"
-                                        } else {
-                                            option.detail
-                                        }
-
-                                        Surface(
-                                            onClick = {
-                                                selectVideoQuality(option)
-                                                showQualityDialog = false
-                                            },
-                                            shape = RoundedCornerShape(12.dp),
-                                            color = if (isSelected || isActiveAuto) {
-                                                NeonCyan.copy(alpha = 0.16f)
-                                            } else {
-                                                Color.White.copy(alpha = 0.05f)
-                                            },
-                                            border = if (isSelected || isActiveAuto) {
-                                                BorderStroke(1.dp, NeonCyan.copy(alpha = 0.7f))
-                                            } else {
-                                                null
-                                            },
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .testTag("quality_option_${option.id}")
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(horizontal = 14.dp, vertical = 12.dp)
-                                            ) {
-                                                Column(modifier = Modifier.weight(1f)) {
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        Text(
-                                                            text = option.label,
-                                                            color = if (isSelected || isActiveAuto) NeonCyan else Color.White,
-                                                            fontSize = 14.sp,
-                                                            fontWeight = FontWeight.SemiBold
-                                                        )
-                                                        if (!option.isSupported && option.id != "auto") {
-                                                            Spacer(modifier = Modifier.width(6.dp))
-                                                            Text(
-                                                                text = if (isBangla) "(সফটওয়্যার)" else "(SW)",
-                                                                color = GoldenVault,
-                                                                fontSize = 10.sp,
-                                                                fontWeight = FontWeight.Bold
-                                                            )
-                                                        }
-                                                    }
-                                                    Text(
-                                                        text = detailText,
-                                                        color = Color.White.copy(alpha = 0.65f),
-                                                        fontSize = 11.sp
-                                                    )
-                                                }
-                                                if (isSelected || isActiveAuto) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Check,
-                                                        contentDescription = "Selected",
-                                                        tint = NeonCyan,
-                                                        modifier = Modifier.size(20.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(10.dp))
-                                Row(
-                                    horizontalArrangement = Arrangement.End,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    TextButton(onClick = { showQualityDialog = false }) {
-                                        Text(
-                                            text = if (isBangla) "বন্ধ করুন" else "Close",
-                                            color = Color.White.copy(alpha = 0.85f)
-                                        )
-                                    }
-                                }
+                            }
+                            Spacer(modifier = Modifier.width(16.dp))
+                            IconButton(onClick = { safeSeekTo(currentPositionMs + 10000L) }) {
+                                Icon(Icons.Default.Forward10, contentDescription = "Forward 10s", tint = Color.White)
                             }
                         }
                     }
                 }
+            }
+
+            if (showQualityDialog) {
+                VideoQualitySelectionDialog(
+                    qualityOptions = qualityOptions,
+                    selectedQualityId = selectedQualityId,
+                    videoWidth = videoWidth,
+                    videoHeight = videoHeight,
+                    isBangla = isBangla,
+                    onSelectQuality = { selectVideoQuality(it) },
+                    onDismiss = { showQualityDialog = false }
+                )
+            }
+
+            if (showAudioSubDialog) {
+                AudioSubtitleSelectionDialog(
+                    audioTracks = audioTrackOptions,
+                    subtitleTracks = subtitleTrackOptions,
+                    externalSubtitleName = externalSubtitleName,
+                    isBangla = isBangla,
+                    onSelectAudio = { selectAudioTrack(it) },
+                    onSelectSubtitle = { selectSubtitleTrack(it) },
+                    onPickExternalSubtitle = {
+                        resumePositionMs = exoPlayer.currentPosition.coerceAtLeast(currentPositionMs).coerceAtLeast(0L)
+                        subtitlePickerLauncher.launch(arrayOf("application/x-subrip", "text/vtt", "text/*", "*/*"))
+                    },
+                    onDismiss = { showAudioSubDialog = false }
+                )
+            }
+
+            if (showDiagnosticsDialog) {
+                PlaybackDiagnosticsDialog(
+                    deviceProfile = deviceProfile,
+                    diagnostics = diagnosticsState,
+                    isBangla = isBangla,
+                    onSwitchSurfaceMode = { nextSurface ->
+                        surfaceMode = nextSurface
+                        diagnosticsState = diagnosticsState.copy(surfaceMode = nextSurface)
+                    },
+                    onSwitchDecoderStrategy = { nextStrategy ->
+                        resumePositionMs = exoPlayer.currentPosition.coerceAtLeast(currentPositionMs).coerceAtLeast(0L)
+                        failedDecoderNames = emptySet()
+                        decoderStrategy = nextStrategy
+                        playbackError = null
+                        reloadTrigger++
+                    },
+                    onDismiss = { showDiagnosticsDialog = false }
+                )
             }
         }
     }
