@@ -329,8 +329,10 @@ fun MxVideoPlayerDialog(
                 buildUponParameters()
                     .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
                     .setMaxVideoBitrate(Int.MAX_VALUE)
+                    .setMaxVideoFrameRate(Int.MAX_VALUE)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
                     .setExceedVideoConstraintsIfNecessary(true)
-                    .setExceedRendererCapabilitiesIfNecessary(useSoftwareDecoder)
+                    .setExceedRendererCapabilitiesIfNecessary(true)
                     .setAllowVideoMixedMimeTypeAdaptiveness(true)
                     .setAllowVideoNonSeamlessAdaptiveness(true)
                     .build()
@@ -433,11 +435,16 @@ fun MxVideoPlayerDialog(
         }
     }
 
+    var hasRenderedFirstFrame by remember(exoPlayer) { mutableStateOf(false) }
+    var hasVideoTracks by remember(exoPlayer) { mutableStateOf(false) }
+
     // Bind media item & listener, release cleanly on disposal or reload
     DisposableEffect(exoPlayer) {
         isPlayerPrepared = false
         isBuffering = true
         playbackError = null
+        hasRenderedFirstFrame = false
+        hasVideoTracks = false
 
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -470,6 +477,10 @@ fun MxVideoPlayerDialog(
                 isPlaying = playing
             }
 
+            override fun onRenderedFirstFrame() {
+                hasRenderedFirstFrame = true
+            }
+
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 if (videoSize.width > 0 && videoSize.height > 0) {
                     videoWidth = videoSize.width
@@ -478,6 +489,17 @@ fun MxVideoPlayerDialog(
             }
 
             override fun onTracksChanged(tracks: Tracks) {
+                val videoGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO && it.length > 0 }
+                hasVideoTracks = videoGroups.isNotEmpty()
+                if (videoGroups.isNotEmpty() && videoGroups.none { it.isSelected } && !useSoftwareDecoder) {
+                    // Hardware renderer rejected all video tracks (would play audio-only); switch to software decoder
+                    resumePositionMs = exoPlayer.currentPosition.coerceAtLeast(currentPositionMs).coerceAtLeast(0L)
+                    playbackError = null
+                    isBuffering = true
+                    useSoftwareDecoder = true
+                    return
+                }
+
                 val extracted = extractVideoQualityOptions(tracks, isBangla)
                 qualityOptions = extracted
                 val videoTrackCount = extracted.count { it.trackGroup != null }
@@ -581,6 +603,24 @@ fun MxVideoPlayerDialog(
         }
     }
 
+    // Watchdog: if audio plays cleanly on a high-quality video but no video frame renders (black screen),
+    // automatically switch to software MediaCodec decoders so both audio and video render visibly.
+    LaunchedEffect(exoPlayer, isPlayerPrepared, isPlaying, hasRenderedFirstFrame, hasVideoTracks, useSoftwareDecoder) {
+        if (isPlayerPrepared && isPlaying && hasVideoTracks && !hasRenderedFirstFrame && !useSoftwareDecoder) {
+            var activePlayMs = 0L
+            while (!hasRenderedFirstFrame && exoPlayer.isPlaying && activePlayMs < 1500L) {
+                delay(250)
+                activePlayMs += 250L
+            }
+            if (!hasRenderedFirstFrame && hasVideoTracks && !useSoftwareDecoder && exoPlayer.isPlaying) {
+                resumePositionMs = exoPlayer.currentPosition.coerceAtLeast(currentPositionMs).coerceAtLeast(0L)
+                playbackError = null
+                isBuffering = true
+                useSoftwareDecoder = true
+            }
+        }
+    }
+
     // Progress ticker loop
     LaunchedEffect(exoPlayer, isPlayerPrepared, isPlaying) {
         while (true) {
@@ -632,6 +672,10 @@ fun MxVideoPlayerDialog(
                             player = exoPlayer
                             useController = false
                             keepScreenOn = true
+                            setShutterBackgroundColor(android.graphics.Color.BLACK)
+                            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                                setEnableComposeSurfaceSyncWorkaround(true)
+                            }
                         }
                     },
                     update = { playerView ->
