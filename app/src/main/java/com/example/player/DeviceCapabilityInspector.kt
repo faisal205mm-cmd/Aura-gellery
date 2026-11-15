@@ -83,7 +83,7 @@ fun normalizeVideoMimeType(mimeType: String): String {
         "video/h264", "video/avc1" -> MediaFormat.MIMETYPE_VIDEO_AVC
         "video/h265", "video/hev1", "video/hvc1" -> MediaFormat.MIMETYPE_VIDEO_HEVC
         "video/vp9" -> MediaFormat.MIMETYPE_VIDEO_VP9
-        "video/av1" -> MediaFormat.MIMETYPE_VIDEO_AV1
+        "video/av1" -> "video/av1"
         else -> mimeType.lowercase()
     }
 }
@@ -101,11 +101,13 @@ fun isSoftwareCodecInfo(info: MediaCodecInfo): Boolean {
 
 object DeviceCapabilityInspector {
 
+    private const val MIME_VIDEO_AV1 = "video/av1"
+
     private val trackedMimeTypes = listOf(
         MediaFormat.MIMETYPE_VIDEO_AVC to "H.264 / AVC",
         MediaFormat.MIMETYPE_VIDEO_HEVC to "H.265 / HEVC",
         MediaFormat.MIMETYPE_VIDEO_VP9 to "VP9",
-        MediaFormat.MIMETYPE_VIDEO_AV1 to "AV1",
+        MIME_VIDEO_AV1 to "AV1",
         MediaFormat.MIMETYPE_VIDEO_MPEG4 to "MPEG-4 / AVI"
     )
 
@@ -242,14 +244,16 @@ object DeviceCapabilityInspector {
                         MediaFormat.MIMETYPE_VIDEO_HEVC ->
                             pl.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10 ||
                                 pl.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10 ||
-                                pl.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus
+                                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                                    pl.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus)
                         MediaFormat.MIMETYPE_VIDEO_AVC ->
                             pl.profile == MediaCodecInfo.CodecProfileLevel.AVCProfileHigh10
                         MediaFormat.MIMETYPE_VIDEO_VP9 ->
                             pl.profile == MediaCodecInfo.CodecProfileLevel.VP9Profile2 ||
                                 pl.profile == MediaCodecInfo.CodecProfileLevel.VP9Profile3
-                        MediaFormat.MIMETYPE_VIDEO_AV1 ->
-                            pl.profile == MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10
+                        MIME_VIDEO_AV1 ->
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                                pl.profile == MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10
                         else -> false
                     }
                 } == true

@@ -1,9 +1,11 @@
 package com.example.ui.components
 
 import android.net.Uri
+import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Tracks
+import androidx.media3.common.util.UnstableApi
 import com.example.data.model.MediaItem
 import java.io.File
 import java.util.Locale
@@ -60,6 +62,7 @@ internal fun formatQualityLabels(width: Int, height: Int): Pair<String, String> 
     }
 }
 
+@OptIn(UnstableApi::class)
 fun extractVideoQualityOptions(tracks: Tracks, isBangla: Boolean): List<VideoQualityOption> {
     val trackOptions = mutableListOf<VideoQualityOption>()
     tracks.groups.forEachIndexed { groupIdx, group ->
