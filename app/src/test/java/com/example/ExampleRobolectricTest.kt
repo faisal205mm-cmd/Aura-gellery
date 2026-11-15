@@ -3,6 +3,7 @@ package com.example
 import android.content.Context
 import android.media.MediaFormat
 import android.net.Uri
+import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.model.MediaItem
@@ -11,7 +12,9 @@ import com.example.data.repository.GalleryRepository
 import com.example.player.CapabilityAwareMediaCodecSelector
 import com.example.player.DecoderStrategy
 import com.example.player.DeviceCapabilityInspector
+import com.example.player.PlaybackDiagnosticsState
 import com.example.player.RenderSurfaceMode
+import com.example.player.StreamPropertyExtractor
 import com.example.player.normalizeVideoMimeType
 import com.example.ui.components.detectSubtitleMimeType
 import com.example.ui.components.formatQualityLabels
@@ -149,5 +152,60 @@ class ExampleRobolectricTest {
     val hwList = hwSelector.getDecoderInfos(MediaFormat.MIMETYPE_VIDEO_AVC, false, false)
     val swList = swSelector.getDecoderInfos(MediaFormat.MIMETYPE_VIDEO_AVC, false, false)
     assertEquals(hwList.size, swList.size)
+  }
+
+  @Test
+  fun `verify mx player style AV1 and AAC stream property extraction`() {
+    val videoFmt = Format.Builder()
+      .setSampleMimeType(MimeTypes.VIDEO_AV1)
+      .setCodecs("av01.0.05M.08")
+      .setWidth(1280)
+      .setHeight(720)
+      .setFrameRate(30f)
+      .setAverageBitrate(1_200_000)
+      .build()
+
+    val audioFmt = Format.Builder()
+      .setSampleMimeType(MimeTypes.AUDIO_AAC)
+      .setCodecs("mp4a.40.2")
+      .setSampleRate(44100)
+      .setChannelCount(2)
+      .setAverageBitrate(127_900)
+      .build()
+
+    val diag = PlaybackDiagnosticsState(
+      videoMimeType = MimeTypes.VIDEO_AV1,
+      videoCodec = "av01.0.05M.08",
+      width = 1280,
+      height = 720,
+      frameRate = 30f,
+      bitrateBps = 1_200_000,
+      audioMimeType = MimeTypes.AUDIO_AAC,
+      audioCodec = "mp4a.40.2",
+      selectedVideoDecoder = "c2.android.av1-dav1d.decoder",
+      selectedAudioDecoder = "OMX.google.aac.decoder",
+      videoFormat = videoFmt,
+      audioFormat = audioFmt,
+      encodingSoftware = "Lavc61.33.102 libsvtav1"
+    )
+
+    val streams = StreamPropertyExtractor.buildMediaStreamInfos(tracks = null, diagnostics = diag, isBangla = false)
+    assertEquals(2, streams.size)
+
+    val videoStream = streams[0]
+    assertEquals("Video Codec: AV1", videoStream.codecShortTitle)
+    assertEquals("Main", videoStream.rows.first { it.label == "Profile" }.value)
+    assertEquals("1280 × 720", videoStream.rows.first { it.label == "Resolution" }.value)
+    assertEquals("30 FPS", videoStream.rows.first { it.label == "Frame rate" }.value)
+    assertEquals("1.2 Mbit/s", videoStream.rows.first { it.label == "Bit rate" }.value)
+    assertEquals("Lavc61.33.102 libsvtav1", videoStream.rows.first { it.label == "Encoding SW" }.value)
+    assertTrue(videoStream.rows.first { it.label == "Codec" }.value.contains("dav1d AV1 decoder"))
+
+    val audioStream = streams[1]
+    assertEquals("Audio Codec: AAC", audioStream.codecShortTitle)
+    assertEquals("LC", audioStream.rows.first { it.label == "Profile" }.value)
+    assertEquals("44100 Hz", audioStream.rows.first { it.label == "Sample rate" }.value)
+    assertEquals("Stereo (2 Channel)", audioStream.rows.first { it.label == "Channels" }.value)
+    assertEquals("127.9 kbits/sec", audioStream.rows.first { it.label == "Bit rate" }.value)
   }
 }

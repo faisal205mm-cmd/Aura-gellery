@@ -119,6 +119,7 @@ import com.example.player.DeviceCapabilityInspector
 import com.example.player.PlaybackDiagnosticsCollector
 import com.example.player.PlaybackDiagnosticsState
 import com.example.player.RenderSurfaceMode
+import com.example.player.StreamPropertyExtractor
 import com.example.ui.theme.ElectricIndigo
 import com.example.ui.theme.GoldenVault
 import com.example.ui.theme.NeonCyan
@@ -254,10 +255,15 @@ fun MxVideoPlayerDialog(
                     .setMaxVideoBitrate(Int.MAX_VALUE)
                     .setMaxVideoFrameRate(Int.MAX_VALUE)
                     .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
                     .setExceedVideoConstraintsIfNecessary(true)
                     .setExceedRendererCapabilitiesIfNecessary(true)
                     .setAllowVideoMixedMimeTypeAdaptiveness(true)
                     .setAllowVideoNonSeamlessAdaptiveness(true)
+                    .setAllowAudioMixedMimeTypeAdaptiveness(true)
+                    .setAllowAudioMixedSampleRateAdaptiveness(true)
+                    .setAllowAudioMixedChannelCountAdaptiveness(true)
+                    .setAllowAudioMixedDecoderSupportAdaptiveness(true)
                     .build()
             )
         }
@@ -395,6 +401,7 @@ fun MxVideoPlayerDialog(
 
     var hasRenderedFirstFrame by remember(exoPlayer) { mutableStateOf(false) }
     var hasVideoTracks by remember(exoPlayer) { mutableStateOf(false) }
+    var latestTracks by remember(exoPlayer) { mutableStateOf<Tracks?>(null) }
 
     // Bind media, listeners, EventLogger & DiagnosticsCollector; release strictly on dispose
     DisposableEffect(exoPlayer) {
@@ -455,6 +462,7 @@ fun MxVideoPlayerDialog(
             }
 
             override fun onTracksChanged(tracks: Tracks) {
+                latestTracks = tracks
                 val videoGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO && it.length > 0 }
                 hasVideoTracks = videoGroups.isNotEmpty()
                 if (videoGroups.isNotEmpty() && videoGroups.none { it.isSelected } && decoderStrategy == DecoderStrategy.HARDWARE_FIRST) {
@@ -1258,9 +1266,19 @@ fun MxVideoPlayerDialog(
             }
 
             if (showDiagnosticsDialog) {
+                val streamInfos = remember(latestTracks, diagnosticsState, totalDurationMs, isBangla) {
+                    StreamPropertyExtractor.buildMediaStreamInfos(
+                        tracks = latestTracks,
+                        diagnostics = diagnosticsState,
+                        fileSizeBytes = item.size,
+                        durationMs = totalDurationMs,
+                        isBangla = isBangla
+                    )
+                }
                 PlaybackDiagnosticsDialog(
                     deviceProfile = deviceProfile,
                     diagnostics = diagnosticsState,
+                    streamInfos = streamInfos,
                     isBangla = isBangla,
                     onSwitchSurfaceMode = { nextSurface ->
                         surfaceMode = nextSurface

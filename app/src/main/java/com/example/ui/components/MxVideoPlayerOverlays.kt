@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.player.DecoderStrategy
 import com.example.player.DevicePlaybackProfile
+import com.example.player.MediaStreamInfo
 import com.example.player.PlaybackDiagnosticsState
 import com.example.player.RenderSurfaceMode
 import com.example.ui.theme.GoldenVault
@@ -438,6 +439,7 @@ fun AudioSubtitleSelectionDialog(
 fun PlaybackDiagnosticsDialog(
     deviceProfile: DevicePlaybackProfile,
     diagnostics: PlaybackDiagnosticsState,
+    streamInfos: List<MediaStreamInfo> = emptyList(),
     isBangla: Boolean,
     onSwitchSurfaceMode: (RenderSurfaceMode) -> Unit,
     onSwitchDecoderStrategy: (DecoderStrategy) -> Unit,
@@ -464,7 +466,7 @@ fun PlaybackDiagnosticsDialog(
             Column(
                 modifier = Modifier
                     .padding(18.dp)
-                    .heightIn(max = 520.dp)
+                    .heightIn(max = 540.dp)
                     .verticalScroll(rememberScrollState())
             ) {
                 Row(
@@ -476,7 +478,7 @@ fun PlaybackDiagnosticsDialog(
                         Icon(Icons.Default.Info, contentDescription = null, tint = NeonCyan, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (isBangla) "প্লেব্যাক ডায়াগনস্টিকস" else "Playback Diagnostics",
+                            text = if (isBangla) "স্ট্রিম প্রোপার্টিজ ও ডায়াগনস্টিকস" else "Stream Properties & Diagnostics",
                             color = Color.White,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold
@@ -488,6 +490,15 @@ fun PlaybackDiagnosticsDialog(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
+                }
+
+                if (streamInfos.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    streamInfos.forEach { stream ->
+                        StreamPropertyCard(stream = stream, isBangla = isBangla)
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
@@ -602,16 +613,69 @@ fun PlaybackDiagnosticsDialog(
 }
 
 @Composable
+fun StreamPropertyCard(stream: MediaStreamInfo, isBangla: Boolean) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = Color.White.copy(alpha = 0.05f),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("stream_card_${stream.streamNumber}")
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                text = "Stream #${stream.streamNumber} — ${stream.streamType}",
+                color = NeonCyan,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = stream.codecShortTitle,
+                color = GoldenVault,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 2.dp, bottom = 6.dp)
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = if (isBangla) "বিষয়" else "Property",
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.width(100.dp)
+                )
+                Text(
+                    text = if (isBangla) "তথ্য" else "Info",
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            stream.rows.forEach { row ->
+                DiagnosticRow(row.label, row.value)
+            }
+        }
+    }
+}
+
+@Composable
 private fun DiagnosticRow(label: String, value: String, valueColor: Color = Color.White.copy(alpha = 0.88f)) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp),
+            .padding(vertical = 2.dp, horizontal = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(
-            text = "$label:",
-            color = Color.White.copy(alpha = 0.55f),
+            text = label,
+            color = Color.White.copy(alpha = 0.58f),
             fontSize = 11.sp,
             fontWeight = FontWeight.Medium,
             modifier = Modifier.width(102.dp)

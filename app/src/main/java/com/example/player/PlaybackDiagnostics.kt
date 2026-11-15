@@ -29,7 +29,10 @@ data class PlaybackDiagnosticsState(
     val lastRenderError: String? = null,
     val surfaceMode: RenderSurfaceMode = RenderSurfaceMode.SURFACE_VIEW,
     val decoderStrategy: DecoderStrategy = DecoderStrategy.HARDWARE_FIRST,
-    val recentEvents: List<String> = emptyList()
+    val recentEvents: List<String> = emptyList(),
+    val videoFormat: Format? = null,
+    val audioFormat: Format? = null,
+    val encodingSoftware: String? = null
 )
 
 @OptIn(UnstableApi::class)
@@ -86,6 +89,7 @@ class PlaybackDiagnosticsCollector(
             TAG,
             "videoFormat mime=$mime codecs=$codecs res=${format.width}x${format.height} fps=$fpsText bitrate=$bitrateText"
         )
+        val encSw = StreamPropertyExtractor.extractEncodingSoftware(format)
         pushState("Video: ${format.width}x${format.height} $mime ($codecs) $fpsText $bitrateText") {
             it.copy(
                 videoMimeType = mime,
@@ -93,7 +97,9 @@ class PlaybackDiagnosticsCollector(
                 width = format.width.coerceAtLeast(0),
                 height = format.height.coerceAtLeast(0),
                 frameRate = format.frameRate,
-                bitrateBps = format.bitrate
+                bitrateBps = format.bitrate,
+                videoFormat = format,
+                encodingSoftware = encSw ?: it.encodingSoftware
             )
         }
     }
@@ -106,8 +112,14 @@ class PlaybackDiagnosticsCollector(
         val mime = format.sampleMimeType ?: "-"
         val codecs = format.codecs ?: "-"
         Log.i(TAG, "audioFormat mime=$mime codecs=$codecs ch=${format.channelCount} sr=${format.sampleRate}")
+        val encSw = StreamPropertyExtractor.extractEncodingSoftware(format)
         pushState("Audio: $mime ($codecs) ${format.channelCount}ch ${format.sampleRate}Hz") {
-            it.copy(audioMimeType = mime, audioCodec = codecs)
+            it.copy(
+                audioMimeType = mime,
+                audioCodec = codecs,
+                audioFormat = format,
+                encodingSoftware = it.encodingSoftware ?: encSw
+            )
         }
     }
 

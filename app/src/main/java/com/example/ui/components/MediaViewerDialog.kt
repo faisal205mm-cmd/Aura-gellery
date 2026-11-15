@@ -15,13 +15,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
@@ -47,6 +50,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -74,8 +78,12 @@ import coil.request.videoFramePercent
 import com.example.data.model.BackupStatus
 import com.example.data.model.MediaItem
 import com.example.data.model.StorageType
+import com.example.player.MediaStreamInfo
+import com.example.player.StreamPropertyExtractor
 import com.example.ui.theme.GoldenVault
 import com.example.ui.theme.SoftEmerald
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -95,6 +103,15 @@ fun MediaViewerDialog(
 ) {
     val context = LocalContext.current
     var showInfoSheet by remember { mutableStateOf(false) }
+    var videoStreams by remember(item.uri) { mutableStateOf<List<MediaStreamInfo>>(emptyList()) }
+
+    LaunchedEffect(showInfoSheet, item.uri, isBangla) {
+        if (showInfoSheet && item.isVideo) {
+            videoStreams = withContext(Dispatchers.IO) {
+                StreamPropertyExtractor.inspectFileStreamsOffline(context, item, isBangla)
+            }
+        }
+    }
 
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
@@ -335,7 +352,10 @@ fun MediaViewerDialog(
                             .padding(bottom = 56.dp)
                     ) {
                         Column(
-                            modifier = Modifier.padding(20.dp)
+                            modifier = Modifier
+                                .padding(20.dp)
+                                .heightIn(max = 440.dp)
+                                .verticalScroll(rememberScrollState())
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -398,6 +418,26 @@ fun MediaViewerDialog(
                                 label = if (isBangla) "ফাইলের পাথ" else "Path",
                                 value = item.path.ifEmpty { item.uri }
                             )
+
+                            if (videoStreams.isNotEmpty()) {
+                                HorizontalDivider(
+                                    color = DividerDefaults.color.copy(alpha = 0.3f),
+                                    modifier = Modifier.padding(vertical = 10.dp)
+                                )
+                                videoStreams.forEach { stream ->
+                                    Text(
+                                        text = "Stream #${stream.streamNumber} — ${stream.streamType} (${stream.codecShortTitle})",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+                                    )
+                                    stream.rows.forEach { row ->
+                                        InfoRow(label = row.label, value = row.value)
+                                    }
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                }
+                            }
                         }
                     }
                 }

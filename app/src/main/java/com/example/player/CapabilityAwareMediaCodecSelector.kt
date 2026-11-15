@@ -36,7 +36,9 @@ class CapabilityAwareMediaCodecSelector(
 
         val candidates = if (healthyDecoders.isNotEmpty()) healthyDecoders else allDecoders
 
-        val software = candidates.filter { it.softwareOnly }
+        val software = candidates
+            .filter { it.softwareOnly }
+            .sortedByDescending { it.name.contains("dav1d", ignoreCase = true) }
         val hardware = candidates.filterNot { it.softwareOnly }
 
         val ordered = when (strategy) {
