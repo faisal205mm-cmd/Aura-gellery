@@ -177,18 +177,11 @@ fun MxVideoPlayerDialog(
 
     var qualityOptions by remember(item.uri, item.path) {
         mutableStateOf(
-            listOf(
-                VideoQualityOption(
-                    id = "auto",
-                    label = if (isBangla) "অটো (স্বয়ংক্রিয়)" else "Auto (Recommended)",
-                    shortLabel = if (isBangla) "অটো" else "Auto",
-                    detail = if (isBangla) "ডিভাইসের সক্ষমতা অনুযায়ী সেরা কোয়ালিটি" else "Adapts to device decoder & capabilities",
-                    width = 0,
-                    height = 0,
-                    bitrate = 0,
-                    trackGroup = null,
-                    trackIndex = -1
-                )
+            extractVideoQualityOptions(
+                tracks = null,
+                isBangla = isBangla,
+                fallbackWidth = item.width,
+                fallbackHeight = item.height
             )
         )
     }
@@ -343,24 +336,39 @@ fun MxVideoPlayerDialog(
 
     fun selectVideoQuality(option: VideoQualityOption) {
         if (option.id == selectedQualityId) return
-        val videoTrackCount = qualityOptions.count { it.trackGroup != null }
-        if (videoTrackCount <= 1) {
-            selectedQualityId = option.id
-            return
-        }
+        val nativeTrackCount = qualityOptions.count { it.isNativeTrack }
         try {
             val builder = exoPlayer.trackSelectionParameters.buildUpon()
-            if (option.trackGroup == null || option.trackIndex < 0) {
-                builder
-                    .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
-                    .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
-                    .setMaxVideoBitrate(Int.MAX_VALUE)
-                selectedQualityId = "auto"
-            } else {
-                builder.setOverrideForType(
-                    TrackSelectionOverride(option.trackGroup.mediaTrackGroup, option.trackIndex)
-                )
-                selectedQualityId = option.id
+                .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
+
+            when {
+                option.id == "auto" -> {
+                    builder
+                        .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                        .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
+                        .setMaxVideoBitrate(Int.MAX_VALUE)
+                    selectedQualityId = "auto"
+                }
+                nativeTrackCount >= 2 && option.trackGroup != null && option.trackIndex >= 0 -> {
+                    builder
+                        .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
+                        .setMaxVideoBitrate(Int.MAX_VALUE)
+                        .setOverrideForType(
+                            TrackSelectionOverride(option.trackGroup.mediaTrackGroup, option.trackIndex)
+                        )
+                    selectedQualityId = option.id
+                }
+                else -> {
+                    builder.clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                    if (option.width > 0 && option.height > 0 && minOf(option.width, option.height) < 1080) {
+                        builder.setMaxVideoSize(option.width, option.height)
+                    } else {
+                        builder
+                            .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
+                            .setMaxVideoBitrate(Int.MAX_VALUE)
+                    }
+                    selectedQualityId = option.id
+                }
             }
             exoPlayer.trackSelectionParameters = builder.build()
         } catch (e: Exception) {
@@ -473,13 +481,18 @@ fun MxVideoPlayerDialog(
                     return
                 }
 
-                val extracted = extractVideoQualityOptions(tracks, isBangla)
+                val extracted = extractVideoQualityOptions(
+                    tracks = tracks,
+                    isBangla = isBangla,
+                    fallbackWidth = videoWidth,
+                    fallbackHeight = videoHeight
+                )
                 qualityOptions = extracted
                 audioTrackOptions = extractAudioTrackOptions(tracks, isBangla)
                 subtitleTrackOptions = extractSubtitleTrackOptions(tracks, isBangla)
 
-                val videoTrackCount = extracted.count { it.trackGroup != null }
-                if (videoTrackCount <= 1) return
+                val nativeTrackCount = extracted.count { it.isNativeTrack }
+                if (nativeTrackCount <= 1) return
 
                 val hasVideoOverride = exoPlayer.trackSelectionParameters.overrides.values.any {
                     it.type == C.TRACK_TYPE_VIDEO

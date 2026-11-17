@@ -3,8 +3,11 @@ package com.example
 import android.content.Context
 import android.media.MediaFormat
 import android.net.Uri
+import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.TrackGroup
+import androidx.media3.common.Tracks
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.model.MediaItem
 import com.example.data.model.StorageType
@@ -17,6 +20,7 @@ import com.example.player.RenderSurfaceMode
 import com.example.player.StreamPropertyExtractor
 import com.example.player.normalizeVideoMimeType
 import com.example.ui.components.detectSubtitleMimeType
+import com.example.ui.components.extractVideoQualityOptions
 import com.example.ui.components.formatQualityLabels
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -207,5 +211,42 @@ class ExampleRobolectricTest {
     assertEquals("44100 Hz", audioStream.rows.first { it.label == "Sample rate" }.value)
     assertEquals("Stereo (2 Channel)", audioStream.rows.first { it.label == "Channels" }.value)
     assertEquals("127.9 kbits/sec", audioStream.rows.first { it.label == "Bit rate" }.value)
+  }
+
+  @Test
+  fun `verify 1080p option appears directly below 720p for high quality videos`() {
+    // Multi-track stream (1080p, 720p, 480p)
+    val f1080 = Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264).setWidth(1920).setHeight(1080).build()
+    val f720 = Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264).setWidth(1280).setHeight(720).build()
+    val f480 = Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264).setWidth(854).setHeight(480).build()
+    val group = TrackGroup(f1080, f720, f480)
+    val tracks = Tracks(
+      listOf(
+        Tracks.Group(
+          group,
+          true,
+          intArrayOf(C.FORMAT_HANDLED, C.FORMAT_HANDLED, C.FORMAT_HANDLED),
+          booleanArrayOf(false, true, false)
+        )
+      )
+    )
+
+    val multiOptions = extractVideoQualityOptions(tracks = tracks, isBangla = false)
+    val idx720Multi = multiOptions.indexOfFirst { it.shortLabel == "720p" }
+    val idx1080Multi = multiOptions.indexOfFirst { it.shortLabel == "1080p" }
+    assertTrue(idx720Multi >= 0)
+    assertEquals(idx720Multi + 1, idx1080Multi)
+
+    // Single-track high quality video (e.g. 720p or 1080p local MP4)
+    val single720Options = extractVideoQualityOptions(
+      tracks = null,
+      isBangla = false,
+      fallbackWidth = 1280,
+      fallbackHeight = 720
+    )
+    val idx720Single = single720Options.indexOfFirst { it.shortLabel == "720p" }
+    val idx1080Single = single720Options.indexOfFirst { it.shortLabel == "1080p" }
+    assertTrue(idx720Single >= 0)
+    assertEquals(idx720Single + 1, idx1080Single)
   }
 }

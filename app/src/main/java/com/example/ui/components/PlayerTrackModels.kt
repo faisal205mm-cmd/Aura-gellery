@@ -27,7 +27,8 @@ data class VideoQualityOption(
     val bitrate: Int,
     val trackGroup: Tracks.Group?,
     val trackIndex: Int,
-    val isSupported: Boolean = true
+    val isSupported: Boolean = true,
+    val isNativeTrack: Boolean = trackGroup != null
 )
 
 data class AudioTrackOption(
@@ -63,9 +64,14 @@ internal fun formatQualityLabels(width: Int, height: Int): Pair<String, String> 
 }
 
 @OptIn(UnstableApi::class)
-fun extractVideoQualityOptions(tracks: Tracks, isBangla: Boolean): List<VideoQualityOption> {
+fun extractVideoQualityOptions(
+    tracks: Tracks?,
+    isBangla: Boolean,
+    fallbackWidth: Int = 0,
+    fallbackHeight: Int = 0
+): List<VideoQualityOption> {
     val trackOptions = mutableListOf<VideoQualityOption>()
-    tracks.groups.forEachIndexed { groupIdx, group ->
+    tracks?.groups?.forEachIndexed { groupIdx, group ->
         if (group.type == C.TRACK_TYPE_VIDEO) {
             for (trackIdx in 0 until group.length) {
                 val format = group.getTrackFormat(trackIdx)
@@ -92,7 +98,8 @@ fun extractVideoQualityOptions(tracks: Tracks, isBangla: Boolean): List<VideoQua
                             bitrate = format.bitrate,
                             trackGroup = group,
                             trackIndex = trackIdx,
-                            isSupported = group.isTrackSupported(trackIdx)
+                            isSupported = group.isTrackSupported(trackIdx),
+                            isNativeTrack = true
                         )
                     )
                 }
@@ -100,10 +107,11 @@ fun extractVideoQualityOptions(tracks: Tracks, isBangla: Boolean): List<VideoQua
         }
     }
 
-    val sortedTracks = trackOptions.sortedWith(
-        compareByDescending<VideoQualityOption> { minOf(it.width, it.height) }
-            .thenByDescending { maxOf(it.width, it.height) }
-            .thenByDescending { it.bitrate }
+    // Sort ascending so lower qualities come first and 1080p appears directly below 720p
+    val sortedNativeTracks = trackOptions.sortedWith(
+        compareBy<VideoQualityOption> { minOf(it.width, it.height) }
+            .thenBy { maxOf(it.width, it.height) }
+            .thenBy { it.bitrate }
     )
 
     val autoOption = VideoQualityOption(
@@ -115,10 +123,90 @@ fun extractVideoQualityOptions(tracks: Tracks, isBangla: Boolean): List<VideoQua
         height = 0,
         bitrate = 0,
         trackGroup = null,
-        trackIndex = -1
+        trackIndex = -1,
+        isNativeTrack = false
     )
 
-    return listOf(autoOption) + sortedTracks
+    val refWidth = sortedNativeTracks.maxOfOrNull { it.width } ?: fallbackWidth
+    val refHeight = sortedNativeTracks.maxOfOrNull { it.height } ?: fallbackHeight
+    val refShortSide = minOf(refWidth, refHeight)
+    val refLongSide = maxOf(refWidth, refHeight)
+
+    if (sortedNativeTracks.size <= 1 && (refShortSide >= 720 || refLongSide >= 1280)) {
+        val singleNative = sortedNativeTracks.firstOrNull()
+        val singleNativeShort = singleNative?.let { minOf(it.width, it.height) } ?: 0
+        val singleNativeLong = singleNative?.let { maxOf(it.width, it.height) } ?: 0
+
+        val options = mutableListOf(autoOption)
+
+        // 480p preset
+        options.add(
+            VideoQualityOption(
+                id = "preset_480p",
+                label = "480p",
+                shortLabel = "480p",
+                detail = if (isBangla) "স্ট্যান্ডার্ড সেভিং মোড (854×480)" else "Data/Battery Saver (854×480)",
+                width = 854,
+                height = 480,
+                bitrate = 0,
+                trackGroup = null,
+                trackIndex = -1,
+                isSupported = true,
+                isNativeTrack = false
+            )
+        )
+
+        // 720p option
+        if (singleNative != null && singleNativeShort in 720..1079 && singleNativeLong < 1920) {
+            options.add(singleNative)
+        } else {
+            options.add(
+                VideoQualityOption(
+                    id = "preset_720p",
+                    label = "720p HD",
+                    shortLabel = "720p",
+                    detail = if (isBangla) "মসৃণ এইচডি প্লেব্যাক (1280×720)" else "Smooth HD playback (1280×720)",
+                    width = 1280,
+                    height = 720,
+                    bitrate = 0,
+                    trackGroup = null,
+                    trackIndex = -1,
+                    isSupported = true,
+                    isNativeTrack = false
+                )
+            )
+        }
+
+        // 1080p option directly below 720p
+        if (singleNative != null && (singleNativeShort in 1080..1439 || (singleNativeLong >= 1920 && singleNativeShort < 1440))) {
+            options.add(singleNative)
+        } else {
+            options.add(
+                VideoQualityOption(
+                    id = "preset_1080p",
+                    label = "1080p Full HD",
+                    shortLabel = "1080p",
+                    detail = if (isBangla) "হাই কোয়ালিটি ফুল এইচডি (1920×1080)" else "High quality Full HD (1920×1080)",
+                    width = 1920,
+                    height = 1080,
+                    bitrate = 0,
+                    trackGroup = null,
+                    trackIndex = -1,
+                    isSupported = true,
+                    isNativeTrack = false
+                )
+            )
+        }
+
+        // Keep 1440p / 4K native track if source is above 1080p
+        if (singleNative != null && (singleNativeShort >= 1440 || singleNativeLong >= 2560)) {
+            options.add(singleNative)
+        }
+
+        return options
+    }
+
+    return listOf(autoOption) + sortedNativeTracks
 }
 
 fun extractAudioTrackOptions(tracks: Tracks, isBangla: Boolean): List<AudioTrackOption> {

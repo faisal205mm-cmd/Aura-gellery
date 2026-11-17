@@ -115,13 +115,13 @@ fun VideoQualitySelectionDialog(
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
-                val videoTrackCount = qualityOptions.count { it.trackGroup != null }
+                val videoTrackCount = qualityOptions.count { it.isNativeTrack }
                 Text(
                     text = if (videoTrackCount <= 1) {
                         if (isBangla) {
-                            "এই ভিডিওতে ১টি মূল রেজোলিউশন ট্র্যাক রয়েছে"
+                            "ভিডিও কোয়ালিটি (720p / 1080p) নির্বাচন করুন"
                         } else {
-                            "This media source has 1 native resolution track"
+                            "Select video quality (switch between 720p, 1080p, or Auto)"
                         }
                     } else {
                         if (isBangla) {
@@ -182,7 +182,7 @@ fun VideoQualitySelectionDialog(
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.SemiBold
                                         )
-                                        if (!option.isSupported && option.id != "auto") {
+                                        if (!option.isSupported && option.id != "auto" && option.isNativeTrack) {
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
                                                 text = if (isBangla) "(সফটওয়্যার)" else "(SW)",
